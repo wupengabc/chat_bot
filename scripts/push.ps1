@@ -18,6 +18,9 @@ $content = Get-Content $packageJson -Raw
 # 检查是否有本地 link: 依赖
 $hasLocalLinks = $content -match '"link:'
 
+# 临时取消 skip-worktree 以便 git 能跟踪变更
+git update-index --no-skip-worktree package.json 2>$null
+
 if ($hasLocalLinks) {
     # 备份原始 package.json
     Copy-Item $packageJson $backup -Force
@@ -46,6 +49,9 @@ if ($hasLocalLinks) {
     git add package.json
     git commit -m "chore: restore local dev dependencies" --no-verify
 
+    # 重新设置 skip-worktree
+    git update-index --skip-worktree package.json
+
     if ($pushExit -ne 0) {
         Write-Error "推送失败 (exit code: $pushExit)"
         exit $pushExit
@@ -56,4 +62,7 @@ if ($hasLocalLinks) {
     # 没有本地链接，直接推送
     $pushArgs = $args -join " "
     git push $pushArgs
+
+    # 重新设置 skip-worktree
+    git update-index --skip-worktree package.json
 }
