@@ -1,0 +1,16 @@
+{
+  "name": "bangxi_autologin",
+  "description": "自动登录插件",
+  "config_template": {
+    "password": {
+      "name": "password",
+      "type": "string",
+      "description": "登录密码",
+      "default": ""
+    }
+  },
+  "configs": [{
+    "name": "bangxi",
+    "password": "your_password_here"
+  }]
+}

@@ -1,0 +1,68 @@
+{
+  "name": "mineflayer",
+  "description": "Mineflayer 机器人 For Minecraft 服务器",
+  "config_template": {
+    "host": {
+      "name": "host",
+      "type": "text",
+      "default": "localhost",
+      "description": "Minecraft 服务器主机"
+    },
+    "port": {
+      "name": "port",
+      "type": "number",
+      "default": 25565,
+      "description": "Minecraft 服务器端口"
+    },
+    "username": {
+      "name": "username",
+      "type": "text",
+      "default": "player",
+      "description": "Minecraft 用户名"
+    },
+    "version": {
+      "name": "version",
+      "type": "single_select",
+      "options": ["1.7", "1.8.8", "1.9.4", "1.10.2", "1.11.2", "1.12.2", "1.13.2", "1.14.4", "1.15.2", "1.16.5", "1.17.1", "1.18.2", "1.19", "1.19.2", "1.19.3", "1.19.4", "1.20", "1.20.1", "1.20.2", "1.20.4", "1.20.6", "1.21.1", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.8", "1.21.9", "1.21.11", "26.1.2"],
+      "default": "26.1.2",
+      "description": "Minecraft 版本"
+    },
+    "reconnection": {
+      "name": "reconnection",
+      "type": "object",
+      "description": "Mineflayer 机器人重连配置",
+      "default": {
+        "enable": {
+          "name": "enable",
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用重连"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "number",
+          "default": 10000,
+          "description": "重连尝试次数"
+        },
+        "delay": {
+          "name": "delay",
+          "type": "number",
+          "default": 10000,
+          "description": "重连延迟时间"
+        }
+      }
+    }
+  },
+  "configs": [{
+    "name": "example",
+    "host": "localhost",
+    "port": 25565,
+    "username": "player",
+    "version": "26.1.2",
+    "reconnection": {
+      "enable": true,
+      "attempts": 10000,
+      "delay": 10000
+    }
+  }]
+}

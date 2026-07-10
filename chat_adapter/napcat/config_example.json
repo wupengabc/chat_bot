@@ -1,0 +1,71 @@
+{
+  "name": "napcat",
+  "description": "Napcat 适配器",
+  "config_template": {
+    "protocol": {
+      "name": "protocol",
+      "type": "single_select",
+      "options": [
+        "ws",
+        "http"
+      ],
+      "default": "ws",
+      "description": "Napcat 协议"
+    },
+    "host": {
+      "name": "host",
+      "type": "text",
+      "default": "localhost",
+      "description": "Napcat 主机地址"
+    },
+    "port": {
+      "name": "port",
+      "type": "number",
+      "default": 3001,
+      "description": "Napcat 端口号"
+    },
+    "accessToken": {
+      "name": "accessToken",
+      "type": "text",
+      "default": "",
+      "description": "Napcat 访问令牌"
+    },
+    "reconnection": {
+      "name": "reconnection",
+      "type": "object",
+      "default": {
+        "enable": {
+          "name": "enable",
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用重连"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "number",
+          "default": 10000,
+          "description": "重连尝试次数"
+        },
+        "delay": {
+          "name": "delay",
+          "type": "number",
+          "default": 10000,
+          "description": "重连延迟时间"
+        }
+      },
+      "description": "Napcat 重连配置"
+    }
+  },
+  "configs": [{
+    "name": "config1",
+    "protocol": "ws",
+    "host": "localhost",
+    "port": 3001,
+    "accessToken": "your_access_token_here",
+    "reconnection": {
+      "enable": true,
+      "attempts": 10000,
+      "delay": 10000
+    }
+  }]
+}

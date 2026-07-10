@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# IDE configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Config (config_example.json is NOT ignored)
+**/config.json
+
+# Logs
+logs/
+
+# Database
+*.db
+
+# Runtime data
+**/data/last_player_list.json
+
+# TypeScript build output
+dist/

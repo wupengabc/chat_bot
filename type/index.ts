@@ -1,0 +1,1 @@
+export type running_status = "running" | "stopped" | "connecting"

@@ -1,0 +1,97 @@
+import {Bot, ReceiverMode, SessionEvents} from "qq-official-bot";
+import {running_status} from "../../type/index.js";
+import {chat_adapter_logger} from "../index.js";
+import {ChatAdapterMessage} from "../type.js";
+import {time_utils} from "../../utils/time_utils.js";
+import {event_emitter} from "../../utils/event_emitter.js";
+
+export class init {
+    private qq_official: Bot;
+    public event = new event_emitter()
+    public status: running_status = "stopped"
+
+    constructor(officialBotConfig:any) {
+        this.status = "connecting"
+        this.qq_official = new Bot({
+            appid: officialBotConfig.appid,
+            secret: officialBotConfig.secret,
+            sandbox: officialBotConfig.sandbox || false,
+            removeAt: officialBotConfig.remove_at !== false,
+            logLevel: 'off',
+            maxRetry: officialBotConfig.reconnection?.attempts || 10000,
+            delay: officialBotConfig.reconnection?.delay || 10000,
+            intents: officialBotConfig.intents || [
+                'GROUP_AND_C2C_EVENT',
+                'GUILD_MESSAGES',
+                'DIRECT_MESSAGE',
+                'GUILD_MESSAGE_REACTIONS',
+                'GUILDS',
+                'GUILD_MEMBERS',
+            ],
+            mode: ReceiverMode.WEBSOCKET
+        })
+
+        this.qq_official.sessionManager.on(SessionEvents.EVENT_WS, (data: any) => {
+            switch (data.eventType) {
+                case SessionEvents.READY:
+                    chat_adapter_logger("qq_official", `qq_official 连接成功`, "info")
+                    this.status = "running"
+                    break
+                case SessionEvents.DISCONNECT:
+                    chat_adapter_logger("qq_official", `qq_official 连接断开`, "warn")
+                    this.status = "stopped"
+                    break
+                case SessionEvents.RESUMED:
+                    chat_adapter_logger("qq_official", `qq_official 重连成功`, "info")
+                    this.status = "running"
+                    break
+                case SessionEvents.RECONNECT:
+                    chat_adapter_logger("qq_official", `qq_official 正在重连`, "warn")
+                    this.status = "connecting"
+                    break
+            }
+        })
+
+        this.qq_official.sessionManager.on(SessionEvents.ERROR, (code: number, message: string) => {
+            chat_adapter_logger("qq_official", `qq_official 连接错误: ${code} ${message}`, "error")
+            this.status = "stopped"
+        })
+
+        this.qq_official.sessionManager.on(SessionEvents.DEAD, () => {
+            chat_adapter_logger("qq_official", `qq_official 连接已死亡，请检查网络或重启`, "error")
+            this.status = "stopped"
+        })
+
+        this.qq_official.start().catch((error:any) => {
+            this.status = "stopped"
+            chat_adapter_logger("qq_official", `qq_official 连接失败`, "error")
+            chat_adapter_logger("qq_official", error.message | error.stack, "error")
+        })
+
+        this.qq_official.on("message", (message:any) => {
+            try {
+                const emit_message:ChatAdapterMessage = {
+                    adapter: "qq_official",
+                    instance_name: officialBotConfig.name,
+                    receiver: {
+                        id: message.bot.config.appid,
+                        type: message.message_type,
+                        channel_name: message.message_type === "group" ? message.group_openid : message.sender.user_name
+                    },
+                    sender: {
+                        id: message.sender.user_id,
+                        name: message.sender.user_name,
+                        role: message.message_type === "group" ? message.author.member_role : "member"
+                    },
+                    raw_message: message.raw_message,
+                    message: message.message,
+                    timestamp: time_utils.get_current_time(),
+                    origin_object: message,
+                }
+                this.event.emit("message", emit_message)
+            } catch (error:any) {
+                chat_adapter_logger("qq_official", `qq_official 处理消息错误: ${error.message}`, "error")
+            }
+        })
+    }
+}

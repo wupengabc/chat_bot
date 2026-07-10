@@ -1,0 +1,91 @@
+{
+  "name": "qq_official",
+  "description": "QQ 官方机器人配置",
+  "config_template": {
+    "appid": {
+      "name": "appid",
+      "type": "text",
+      "default": "",
+      "description": "QQ 官方机器人 AppID"
+    },
+    "secret": {
+      "name": "secret",
+      "type": "text",
+      "default": "",
+      "description": "QQ 官方机器人 Secret"
+    },
+    "sandbox": {
+      "name": "sandbox",
+      "type": "boolean",
+      "default": false,
+      "description": "是否启用沙箱模式"
+    },
+    "remove_at": {
+      "name": "remove_at",
+      "type": "boolean",
+      "default": true,
+      "description": "是否自动移除消息的@部分"
+    },
+    "reconnection": {
+      "name": "reconnection",
+      "type": "object",
+      "description": "QQ 官方机器人重连配置",
+      "default": {
+        "enable": {
+          "name": "enable",
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用重连"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "number",
+          "default": 10000,
+          "description": "重连尝试次数"
+        },
+        "delay": {
+          "name": "delay",
+          "type": "number",
+          "default": 10000,
+          "description": "重连延迟时间"
+        }
+      }
+    },
+    "intents": {
+      "name": "intents",
+      "type": "multiple_select",
+      "options": [
+        "GROUP_AND_C2C_EVENT",
+        "GUILD_MESSAGES",
+        "DIRECT_MESSAGE",
+        "GUILD_MESSAGE_REACTIONS",
+        "GUILDS",
+        "GUILD_MEMBERS",
+        "INTERACTION"
+      ],
+      "default": [],
+      "description": "QQ 官方机器人意图"
+    }
+  },
+  "configs": [{
+    "name": "config1",
+    "appid": "your_appid_here",
+    "secret": "your_secret_here",
+    "sandbox": false,
+    "remove_at": true,
+    "reconnection": {
+      "enable": true,
+      "attempts": 10000,
+      "delay": 10000
+    },
+    "intents": [
+      "GROUP_AND_C2C_EVENT",
+      "GUILD_MESSAGES",
+      "DIRECT_MESSAGE",
+      "GUILD_MESSAGE_REACTIONS",
+      "GUILDS",
+      "GUILD_MEMBERS",
+      "INTERACTION"
+    ]
+  }]
+}

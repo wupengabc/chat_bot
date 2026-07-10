@@ -1,0 +1,36 @@
+{
+  "name": "chat_bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.9.0",
+      "onFail": "download"
+    }
+  },
+  "type": "module",
+  "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.1.1",
+    "better-sqlite3": "^12.11.1",
+    "drizzle-orm": "^0.45.2",
+    "express": "^5.2.1",
+    "minecraft-protocol": "github:wupengabc/node-minecraft-protocol",
+    "mineflayer": "github:wupengabc/mineflayer",
+    "node-napcat-ts": "^0.4.25",
+    "qq-official-bot": "^1.2.3",
+    "tsx": "^4.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
