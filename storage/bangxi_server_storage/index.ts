@@ -453,7 +453,10 @@ export class init {
             .set({
                 money_history: JSON.stringify([
                     ...history,
-                    money
+                    {
+                        money,
+                        timestamp: new Date().toISOString()
+                    }
                 ])
             })
             .where(eq(user_table.username, usernameValue))

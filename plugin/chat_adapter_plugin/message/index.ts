@@ -54,7 +54,7 @@ export class init {
                     .get()
                 const total_page = Math.ceil(total_count.total / count1)
                 const image = renderChatHistory(messages, page, total_page)
-                send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.image(image)], data.origin_object)
+                send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id) ,Structs.image(image)], data.origin_object)
             }
         }
     }
