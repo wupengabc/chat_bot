@@ -134,3 +134,4 @@ export async function loadAvatarImage(username: string, type: AvatarType = "head
     // 本地 Steve 最终兜底
     return fs.readFileSync(path.join(path_utils.get_project_root_path(), "/service/minecraft_service/data/steve.png") );
 }
+

@@ -125,7 +125,7 @@ function logger(platform: string, plugin: string, msg: string, type: LoggerType 
   const timeStr = formatTime(now)
 
   const s = logger_type_style[type]
-  const time = `${D}[${timeStr}]${R}`
+  const time = `${D}[${timeStr.split(' ')[1] ?? timeStr}]${R}`
   const label = `${s.color}${B}[${type.toUpperCase()}]${R}`
   const tags = `${s.color}[${platform}][${plugin}]${R}`
   const line = `${time}${label}${tags} ${s.msgColor}${msg}${R}`

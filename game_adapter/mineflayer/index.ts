@@ -80,6 +80,7 @@ export class init {
             port: config.port,
             username: config.username,
             version: config.version,
+            hideErrors: true,
         })
 
         // ── 登录成功 ──
@@ -97,9 +98,8 @@ export class init {
             this.status = "stopped"
             this.logger(`连接已断开（实例: ${config.name}，原因: ${reason}）`, "info")
             this.event.emit("disconnect", {adapter: "mineflayer", instance_name: config.name, reason })
-
             // 自动重连（仅在未被主动 stop 时）
-            if (!this.isStopped && (config.reconnection as any)?.enabled) {
+            if (!this.isStopped && (config.reconnection as any)?.enable) {
                 const maxReconnect = (config.reconnection as any).attempt || 3
                 if (this.reconnectCount >= maxReconnect) {
                     this.logger(`实例 ${config.name} 重连次数超过上限（${maxReconnect}），停止重连`, "error")
