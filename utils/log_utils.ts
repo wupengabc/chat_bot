@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { EventEmitter } from 'node:events'
+import * as readline from 'node:readline'
 import Database from 'better-sqlite3'
 import {integer, sqliteTable, text} from "drizzle-orm/sqlite-core";
 import {and, count, desc, like} from "drizzle-orm";
@@ -54,6 +55,12 @@ const log_meta_table = sqliteTable("log_meta", {
 
 let _db: ReturnType<typeof Database> | null = null
 let _orm: ReturnType<typeof drizzle> | null = null
+
+let _rl: readline.Interface | null = null
+
+function bindReadline(rl: readline.Interface) {
+  _rl = rl
+}
 
 function ensureDb() {
   if (_db) return
@@ -121,7 +128,19 @@ function logger(platform: string, plugin: string, msg: string, type: LoggerType 
   const time = `${D}[${timeStr}]${R}`
   const label = `${s.color}${B}[${type.toUpperCase()}]${R}`
   const tags = `${s.color}[${platform}][${plugin}]${R}`
-  console.log(`${time}${label}${tags} ${s.msgColor}${msg}${R}`)
+  const line = `${time}${label}${tags} ${s.msgColor}${msg}${R}`
+
+  if (_rl) {
+    const input = (_rl as any).line ?? ''
+    readline.cursorTo(process.stdout, 0)
+    readline.clearLine(process.stdout, 0)
+    process.stdout.write(line + '\n')
+    if (input) {
+      process.stdout.write(input)
+    }
+  } else {
+    console.log(line)
+  }
 
   ensureDb()
   _orm!.insert(log_table).values({
@@ -164,6 +183,7 @@ function get_platforms_plugins_types() {
 export const log_utils = {
   logger,
   logEvents,
+  bindReadline,
   get_logger_by_platform,
   get_logger_by_platform_type,
   get_logger_by_platform_plugin,

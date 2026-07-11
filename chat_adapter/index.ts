@@ -72,3 +72,12 @@ export async function init_chat_adapter() {
         chat_adapter_logger("main", error.message | error.stack, "error")
     }
 }
+
+export function send_message(adapter: string, instance_name: string, type: "group" | "private", user_id: number, message: any, event:any) {
+    const adapter_temp = running_chat_adapters.get(adapter).get(instance_name)
+    if (!adapter_temp) {
+        chat_adapter_logger("main", `chat_adapter ${adapter} 实例 ${instance_name} 不存在`, "error")
+        return
+    }
+    adapter_temp.send(type, user_id, message, event)
+}

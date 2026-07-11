@@ -52,7 +52,8 @@ export class init {
                     channel_name: msg.message_type === 'group' ? msg.group_name : msg.sender.nickname,
                 },
                 sender: {
-                    id: msg.sender.user_id,
+                    id: msg.message_type === 'group' ? msg.group_id : msg.sender.user_id,
+                    user_id: msg.sender.user_id,
                     role: msg.message_type === 'group' ? msg.sender.role : 'member',
                     name: msg.sender.nickname,
                 },
@@ -63,5 +64,23 @@ export class init {
             }
             this.event.emit('message', emit_msg)
         })
+    }
+
+    send(type: "group" | "private", user_id: number, message: any, event: any) {
+        if (type === "group") {
+            this.napcat.send_group_msg({
+                group_id: user_id,
+                message,
+            }).then(() => {
+                chat_adapter_logger("napcat", `发送群消息成功, 群ID: ${user_id}, 消息: ${message}`, "info")
+            })
+        } else if (type === "private") {
+            this.napcat.send_private_msg({
+                user_id: user_id,
+                message,
+            }).then(() => {
+                chat_adapter_logger("napcat", `发送私信成功, 用户ID: ${user_id}, 消息: ${message}`, "info")
+            })
+        }
     }
 }

@@ -12,7 +12,7 @@ export function storage_logger(plugin: string, msg: string, type: LoggerType) {
 
 export function storage_handle_adapter_event(adapter: string, event: string, data: any) {
     for (const [plugin, storage] of running_storage) {
-        storage.event_handler(event, {adapter, ...data})
+        storage.event_handler(event, {adapter_platform: adapter, ...data})
     }
 }
 
@@ -29,4 +29,8 @@ export async function init_storage() {
             storage_logger(path.basename(item), `失败启动 ${item} storage: ${error}`, "error")
         }
     }
+}
+
+export function get_storage(plugin: string) {
+    return running_storage.get(plugin)
 }

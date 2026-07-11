@@ -80,6 +80,7 @@ export class init {
                     },
                     sender: {
                         id: message.sender.user_id,
+                        user_id: message.sender.user_id,
                         name: message.sender.user_name,
                         role: message.message_type === "group" ? message.author.member_role : "member"
                     },
@@ -93,5 +94,8 @@ export class init {
                 chat_adapter_logger("qq_official", `qq_official 处理消息错误: ${error.message}`, "error")
             }
         })
+    }
+    send(type: "group" | "private", user_id: number, message: any, event: any) {
+        event.reply(message)
     }
 }

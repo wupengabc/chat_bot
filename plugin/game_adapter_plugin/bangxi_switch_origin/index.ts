@@ -1,6 +1,15 @@
 import {get_game_adapter} from "../../../game_adapter/index.js";
+import { help } from "../../type.js";
 
 export class init {
+    public help: help = {
+        name: "bangxi_switch_origin",
+        keyword: "switch_origin",
+        description: "切换到主城",
+        permission: 0,
+        args: [],
+        platform: "game_adapter",
+    }
     constructor() {
     }
 

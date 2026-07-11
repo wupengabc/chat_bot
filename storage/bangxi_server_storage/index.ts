@@ -3,9 +3,9 @@ import path from "node:path";
 import fs from "fs";
 import Database from "better-sqlite3";
 import {integer, sqliteTable, text} from "drizzle-orm/sqlite-core";
-import {eq, sql} from "drizzle-orm";
+import {eq, sql, SQLWrapper} from "drizzle-orm";
 import {orm_utils} from "../../utils/orm_utils.js";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import {drizzle} from "drizzle-orm/better-sqlite3";
 
 interface ChatInfo {
     area?: string
@@ -138,8 +138,8 @@ const message_table = sqliteTable("message", {
 export class init {
     private database_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "bangxi_server.db")
     private last_player_list_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "last_player_list.json")
-    private database:any
-    private orm:any
+    private database: any
+    private orm: any
     /** 玩家消失超过该时间（毫秒）才判定为下线 */
     private static readonly OFFLINE_TIMEOUT_MS = 30_000
     /** 两次检测间隔超过该时间（毫秒）则切断旧会话，开启新会话 */
@@ -150,12 +150,14 @@ export class init {
         session_start: {} as Record<string, number>,
         last_seen: {} as Record<string, number>,
     }
+
     constructor() {
         this.init_database()
     }
+
     private init_database() {
         if (!fs.existsSync(this.database_path)) {
-            fs.mkdirSync(path.dirname(this.database_path), { recursive: true })
+            fs.mkdirSync(path.dirname(this.database_path), {recursive: true})
             fs.writeFileSync(this.database_path, "")
         }
         this.database = new Database(this.database_path)
@@ -196,7 +198,7 @@ export class init {
 
     /** 确保用户记录存在，不存在则创建 */
     private ensure_user_exists(username: string) {
-        const row = this.orm.select({ id: user_table.id })
+        const row = this.orm.select({id: user_table.id})
             .from(user_table)
             .where(eq(user_table.username, username))
             .get()
@@ -327,7 +329,7 @@ export class init {
         }
     }
 
-    handle_message(data:any) {
+    handle_message(data: any) {
         if (data.position === "chat") {
             const chat_info = parseChatInfo(data.message.normalized)
             this.orm.insert(message_table).values({
@@ -348,7 +350,7 @@ export class init {
 
             // 更新 address_list：去重追加
             if (chat_info.address) {
-                const user_row = this.orm.select({ address_list: user_table.address_list })
+                const user_row = this.orm.select({address_list: user_table.address_list})
                     .from(user_table)
                     .where(eq(user_table.username, data.player_name))
                     .get() as { address_list: string } | undefined
@@ -384,7 +386,7 @@ export class init {
                     this.ensure_user_exists(point_transfer_msg.username)
                     const add_point = Math.round(point_transfer_msg.point * 100)
                     this.orm.update(user_table)
-                        .set({ point: sql`${user_table.point} + ${add_point}` })
+                        .set({point: sql`${user_table.point} + ${add_point}`})
                         .where(eq(user_table.username, point_transfer_msg.username))
                         .run()
                 }
@@ -414,5 +416,47 @@ export class init {
                     break
             }
         }
+    }
+
+    get_message_orm() {
+        return {
+            orm: this.orm,
+            table: message_table
+        }
+    }
+
+    insert_money_history(
+        username: string | SQLWrapper,
+        money: unknown
+    ): void {
+        const usernameValue =
+            typeof username === 'string'
+                ? username
+                : username.toString();
+
+        this.ensure_user_exists(usernameValue);
+
+        const row = this.orm
+            .select({
+                moneyHistory: user_table.money_history
+            })
+            .from(user_table)
+            .where(eq(user_table.username, usernameValue))
+            .get();
+
+        const history = JSON.parse(
+            row?.moneyHistory || '[]'
+        ) as unknown[];
+
+        this.orm
+            .update(user_table)
+            .set({
+                money_history: JSON.stringify([
+                    ...history,
+                    money
+                ])
+            })
+            .where(eq(user_table.username, usernameValue))
+            .run();
     }
 }

@@ -1,7 +1,17 @@
 import {get_game_adapter} from "../../../game_adapter/index.js";
+import {help} from "../../type.js";
+
 
 export class init {
     private password: string;
+    public help: help = {
+        name: "bangxi_autologin",
+        keyword: "autologin",
+        description: "自动登录bangxi",
+        permission: 0,
+        args: [],
+        platform: "game_adapter",
+    }
     constructor(config: any) {
         this.password = config.password;
     }

@@ -11,6 +11,7 @@ export interface ChatAdapterMessage {
     },
     sender: {
         id: number | string,
+        user_id: number | string,
         role: sender_role,
         name: string,
     },

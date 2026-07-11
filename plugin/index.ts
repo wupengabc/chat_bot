@@ -3,8 +3,19 @@ import path from "node:path";
 import fs from "node:fs";
 import {log_utils, LoggerType} from "../utils/log_utils.js";
 import {pathToFileURL} from "node:url";
+import {help} from "./type.js";
 
-function plugin_logger(plugin: string, msg: string, type: LoggerType) {
+export function get_chat_adapter_prefix() {
+    const config = fs.readFileSync(path.join(path_utils.get_project_root_path(), "plugin/config.json"), "utf-8")
+    return JSON.parse(config).chat_adapter_prefix
+}
+
+export function get_game_adapter_prefix() {
+    const config = fs.readFileSync(path.join(path_utils.get_project_root_path(), "plugin/config.json"), "utf-8")
+    return JSON.parse(config).game_adapter_prefix
+}
+
+export function plugin_logger(plugin: string, msg: string, type: LoggerType) {
     log_utils.logger("plugin", plugin, msg, type)
 }
 
@@ -15,12 +26,17 @@ interface RunningPlugin {
 
 /** plugin_name → config_name → RunningPlugin */
 const running_plugins = new Map<string, Map<string, RunningPlugin>>()
+export const help_list: help[] = []
+export const permission_map = {
+    0: "普通用户",
+    1: "vip用户",
+    2: "管理员",
+}
 
 /** 目录名 → 默认订阅的分发器 */
 const plugin_dirs: Record<string, string[]> = {
     "chat_adapter_plugin": ["chat_adapter"],
     "game_adapter_plugin": ["game_adapter"],
-    "both_adapter_plugin": ["chat_adapter", "game_adapter"],
 }
 
 /**
@@ -31,7 +47,7 @@ export function plugin_handle_adapter_event(adapter: string, event: string, data
     for (const config_map of running_plugins.values()) {
         for (const { instance, adapters } of config_map.values()) {
             if (adapters.includes(adapter)) {
-                instance.event_handler?.(event, { adapter, ...data })
+                instance.event_handler?.(event, { adapter_platform: adapter, ...data })
             }
         }
     }
@@ -74,7 +90,8 @@ export async function init_plugin() {
                     plugin_logger(plugin_name, "config.json 没有 configs 字段，跳过初始化", "info")
                     continue
                 }
-                const { init } = await import(pathToFileURL(path.join(sub_dir, "index.js")).href)
+                const module_url = pathToFileURL(path.join(sub_dir, "index.js")).href + `?t=${Date.now()}`
+                const { init } = await import(module_url)
                 if (!init) {
                     plugin_logger(plugin_name, "没有 init 导出", "error")
                     continue
@@ -89,6 +106,9 @@ export async function init_plugin() {
                         const adapters = Array.isArray(instance.adapters)
                             ? instance.adapters
                             : default_adapters
+                        if (instance.help) {
+                            help_list.push(instance.help)
+                        }
                         running_plugins.get(config.name)!.set(start_config.name, { instance, adapters })
                         plugin_logger(config.name, `成功启动 ${start_config.name}（分发器: ${adapters.join(", ")}）`, "info")
                     } catch (error: any) {
@@ -100,4 +120,19 @@ export async function init_plugin() {
             }
         }
     }
+}
+
+export async function reload_all_plugin() {
+    // 清理旧插件
+    for (const config_map of running_plugins.values()) {
+        for (const { instance } of config_map.values()) {
+            instance.on_unload?.()
+        }
+    }
+    running_plugins.clear()
+    help_list.length = 0
+
+    plugin_logger("main", "正在重新加载全部插件...", "info")
+    await init_plugin()
+    plugin_logger("main", "插件重载完成", "info")
 }
