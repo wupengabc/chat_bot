@@ -58,6 +58,83 @@ export function get_plugin(plugin_name: string, config_name: string): any {
     return running_plugins.get(plugin_name)?.get(config_name)?.instance
 }
 
+/** 从 running_plugins 重建 help_list */
+function rebuild_help_list() {
+    help_list.length = 0
+    for (const config_map of running_plugins.values()) {
+        for (const { instance } of config_map.values()) {
+            if (instance.help) {
+                help_list.push(instance.help)
+            }
+        }
+    }
+}
+
+/** 加载单个插件目录 */
+async function load_plugin_from_dir(sub_dir: string, default_adapters: string[]) {
+    const plugin_name = path.basename(sub_dir)
+    try {
+        const config_path = path.join(sub_dir, "config.json")
+        const config = JSON.parse(fs.readFileSync(config_path, "utf-8"))
+        if (!config.name) {
+            plugin_logger(plugin_name, "config.json 没有 name 字段", "error")
+            return
+        }
+        running_plugins.set(config.name, new Map())
+        const start_configs = config.configs
+        if (!start_configs) {
+            plugin_logger(plugin_name, "config.json 没有 configs 字段，跳过初始化", "info")
+            return
+        }
+        const module_url = pathToFileURL(path.join(sub_dir, "index.js")).href + `?t=${Date.now()}`
+        const { init } = await import(module_url)
+        if (!init) {
+            plugin_logger(plugin_name, "没有 init 导出", "error")
+            return
+        }
+        for (const start_config of start_configs) {
+            if (!start_config.name) {
+                plugin_logger(plugin_name, "configs name 为空", "error")
+                continue
+            }
+            try {
+                const instance = new init(start_config)
+                const adapters = Array.isArray(instance.adapters)
+                    ? instance.adapters
+                    : default_adapters
+                running_plugins.get(config.name)!.set(start_config.name, { instance, adapters })
+                plugin_logger(config.name, `成功启动 ${start_config.name}（分发器: ${adapters.join(", ")}）`, "info")
+            } catch (error: any) {
+                plugin_logger(config.name, `初始化 ${start_config.name} 失败: ${error.message || error}`, "error")
+            }
+        }
+    } catch (error: any) {
+        plugin_logger(plugin_name, `启动失败: ${error.message || error}`, "error")
+    }
+}
+
+/** 根据插件名查找其目录路径和默认适配器 */
+async function find_plugin_dir(plugin_name: string): Promise<{ sub_dir: string; default_adapters: string[] } | null> {
+    const plugin_base_path = path.join(path_utils.get_project_root_path(), "plugin")
+    for (const [dir_name, default_adapters] of Object.entries(plugin_dirs)) {
+        const dir_path = path.join(plugin_base_path, dir_name)
+        if (!fs.existsSync(dir_path)) continue
+        const sub_dirs = path_utils.get_path_dir_list(dir_path)
+        for (const sub_dir of sub_dirs) {
+            try {
+                const config_path = path.join(sub_dir, "config.json")
+                const config = JSON.parse(fs.readFileSync(config_path, "utf-8"))
+                if (config.name === plugin_name) {
+                    return { sub_dir, default_adapters }
+                }
+            } catch {
+                // 忽略读取失败的目录
+            }
+        }
+    }
+    return null
+}
+
 /**
  * 初始化所有插件。
  * 每个插件目录需包含 config.json，结构为：
@@ -76,63 +153,67 @@ export async function init_plugin() {
 
         const sub_dirs = path_utils.get_path_dir_list(dir_path)
         for (const sub_dir of sub_dirs) {
-            const plugin_name = path.basename(sub_dir)
-            try {
-                const config_path = path.join(sub_dir, "config.json")
-                const config = JSON.parse(fs.readFileSync(config_path, "utf-8"))
-                if (!config.name) {
-                    plugin_logger(plugin_name, "config.json 没有 name 字段", "error")
-                    continue
-                }
-                running_plugins.set(config.name, new Map())
-                const start_configs = config.configs
-                if (!start_configs) {
-                    plugin_logger(plugin_name, "config.json 没有 configs 字段，跳过初始化", "info")
-                    continue
-                }
-                const module_url = pathToFileURL(path.join(sub_dir, "index.js")).href + `?t=${Date.now()}`
-                const { init } = await import(module_url)
-                if (!init) {
-                    plugin_logger(plugin_name, "没有 init 导出", "error")
-                    continue
-                }
-                for (const start_config of start_configs) {
-                    if (!start_config.name) {
-                        plugin_logger(plugin_name, "configs name 为空", "error")
-                        continue
-                    }
-                    try {
-                        const instance = new init(start_config)
-                        const adapters = Array.isArray(instance.adapters)
-                            ? instance.adapters
-                            : default_adapters
-                        if (instance.help) {
-                            help_list.push(instance.help)
-                        }
-                        running_plugins.get(config.name)!.set(start_config.name, { instance, adapters })
-                        plugin_logger(config.name, `成功启动 ${start_config.name}（分发器: ${adapters.join(", ")}）`, "info")
-                    } catch (error: any) {
-                        plugin_logger(config.name, `初始化 ${start_config.name} 失败: ${error.message || error}`, "error")
-                    }
-                }
-            } catch (error: any) {
-                plugin_logger(plugin_name, `启动失败: ${error.message || error}`, "error")
-            }
+            await load_plugin_from_dir(sub_dir, default_adapters)
         }
     }
+    rebuild_help_list()
 }
 
-export async function reload_all_plugin() {
-    // 清理旧插件
-    for (const config_map of running_plugins.values()) {
-        for (const { instance } of config_map.values()) {
+/** 列出正在运行的插件 */
+export function list_plugin(): string[] {
+    const lines: string[] = []
+    if (running_plugins.size === 0) {
+        lines.push("当前没有正在运行的插件")
+        return lines
+    }
+    lines.push(`正在运行的插件（共 ${running_plugins.size} 个）:`)
+    for (const [plugin_name, config_map] of running_plugins) {
+        const config_names = Array.from(config_map.keys()).join(", ")
+        const adapters = Array.from(config_map.values()).map(v => v.adapters.join("/")).join(", ")
+        lines.push(`  - ${plugin_name}（实例: ${config_names}，分发器: ${adapters}）`)
+    }
+    return lines
+}
+
+/**
+ * 重载插件。
+ * 不带参数时重载全部插件，带参数时只重载指定名称的插件。
+ */
+export async function reload_plugin(plugin_name?: string) {
+    if (!plugin_name) {
+        // 重载全部
+        for (const config_map of running_plugins.values()) {
+            for (const { instance } of config_map.values()) {
+                instance.on_unload?.()
+            }
+        }
+        running_plugins.clear()
+        help_list.length = 0
+
+        plugin_logger("main", "正在重新加载全部插件...", "info")
+        await init_plugin()
+        plugin_logger("main", "插件重载完成", "info")
+        return
+    }
+
+    // 重载指定插件
+    const found = await find_plugin_dir(plugin_name)
+    if (!found) {
+        plugin_logger("main", `未找到插件: ${plugin_name}`, "warn")
+        return
+    }
+
+    // 卸载旧实例
+    const old_config_map = running_plugins.get(plugin_name)
+    if (old_config_map) {
+        for (const { instance } of old_config_map.values()) {
             instance.on_unload?.()
         }
+        running_plugins.delete(plugin_name)
     }
-    running_plugins.clear()
-    help_list.length = 0
 
-    plugin_logger("main", "正在重新加载全部插件...", "info")
-    await init_plugin()
-    plugin_logger("main", "插件重载完成", "info")
+    plugin_logger(plugin_name, `正在重新加载插件 ${plugin_name}...`, "info")
+    await load_plugin_from_dir(found.sub_dir, found.default_adapters)
+    rebuild_help_list()
+    plugin_logger(plugin_name, `插件 ${plugin_name} 重载完成`, "info")
 }

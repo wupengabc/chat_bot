@@ -95,6 +95,20 @@ export class init {
             }
         })
     }
+    stop() {
+        try {
+            this.qq_official.stop().then(() => {
+                chat_adapter_logger("qq_official", `qq_official 已断开连接`, "info")
+            }).catch((error: any) => {
+                chat_adapter_logger("qq_official", `qq_official 断开连接失败: ${error.message || error}`, "error")
+            })
+            this.status = "stopped"
+        } catch (error: any) {
+            this.status = "stopped"
+            chat_adapter_logger("qq_official", `qq_official 停止错误: ${error.message || error}`, "error")
+        }
+    }
+
     send(type: "group" | "private", user_id: number, message: any, event: any) {
         event.reply(message)
     }
