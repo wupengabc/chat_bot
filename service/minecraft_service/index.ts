@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import {path_utils} from "../../utils/path_utils.js";
 import path from "node:path";
+import sharp from "sharp";
 
 /* =========================================================
  * 类型定义
@@ -9,9 +10,11 @@ import path from "node:path";
 /**
  * Mojang API 返回的玩家档案数据。
  */
-interface MojangProfileResponse {
-    id?: string;
-    name?: string;
+interface UapisUserinfoResponse {
+    username?: string;
+    uuid?: string;
+    skin_url?: string;
+    cape_url?: string;
 }
 
 /**
@@ -21,50 +24,56 @@ type ValidateOnlineModeResult =
     | { status: true; id: string }
     | { status: false; error: string };
 
-/**
- * 头像渲染类型。
- */
-type AvatarType = "head" | "full" | "vintage" | "side";
-
 /* =========================================================
  * 正版验证
- * ======================================================= */
+ * ========================================================= */
 
 /**
  * 验证玩家是否为正版（在线模式）。
+ *
+ * 使用 uapis.cn API，通过 username 获取 UUID。
  *
  * @param username - Minecraft 玩家名
  * @returns 验证结果，正版时返回 `{ status: true, id }`，否则返回 `{ status: false, error }`
  */
 export async function validateOnlineMode(username: string): Promise<ValidateOnlineModeResult> {
-    return await fetch(`https://api.mojang.com/users/profiles/minecraft/${username}`)
-        .then(res => res.ok ? res.json() : null)
-        .then((data: MojangProfileResponse | null) => {
-            const id = data?.id;
-            if (id) {
-                return {
-                    status: true as const,
-                    id
-                };
-            } else {
-                return {
-                    status: false as const,
-                    error: "未找到该玩家"
-                };
-            }
-        })
-        .catch((error: Error) => {
+    try {
+        const res = await fetch(
+            `https://uapis.cn/api/v1/game/minecraft/userinfo?username=${encodeURIComponent(username)}`
+        );
+        if (!res.ok) {
             return {
                 status: false as const,
-                error: `未知错误: ${error.message}`
+                error: `请求失败: ${res.status}`
             };
-        });
+        }
+        const data = await res.json() as UapisUserinfoResponse;
+        const id = data?.uuid;
+        if (id) {
+            return {
+                status: true as const,
+                id
+            };
+        } else {
+            return {
+                status: false as const,
+                error: "未找到该玩家"
+            };
+        }
+    } catch (error) {
+        return {
+            status: false as const,
+            error: `未知错误: ${error instanceof Error ? error.message : String(error)}`
+        };
+    }
 }
 
 /* =========================================================
  * 头像加载
  * ======================================================= */
 
+
+type AvatarType = "head" | "full" | "vintage" | "side";
 /**
  * 加载玩家头像图片，返回图片 Buffer。
  *
@@ -84,54 +93,57 @@ export async function loadAvatarImage(username: string, type: AvatarType = "head
     };
     const selected = candidates[type] || candidates.head;
 
-    /**
-     * 尝试从 URL 加载图片，返回 Buffer。
-     *
-     * @param url - 图片地址
-     * @returns 成功时返回 Buffer，失败时返回 null
-     */
     async function tryLoad(url: string): Promise<Buffer | null> {
         try {
             const res = await fetch(url);
             if (!res.ok) return null;
-            return Buffer.from(await res.arrayBuffer());
+            const buf = Buffer.from(await res.arrayBuffer());
+            const isHtml = buf.length > 5 && buf.slice(0, 5).toString('utf8') === '<!doc';
+            if (isHtml) return null;
+            // 统一转 PNG，避免 Resvg 在 Linux 下无法渲染 WebP
+            return await convertToPng(buf);
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            console.error(`加载图片失败 (${url}):`, message);
             return null;
         }
     }
 
-    const isOnlineMode = await validateOnlineMode(username);
-    if (!isOnlineMode.status) {
-        // 离线模式：尝试 LittleSkin
+    async function convertToPng(buf: Buffer): Promise<Buffer> {
+        const head = buf.slice(0, 8);
+        // PNG 无需转换
+        if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) {
+            return buf;
+        }
         try {
-            const img = await tryLoad(
-                `https://littleskin.cn/avatar/player/${username}`
-            );
+            return await sharp(buf).png().toBuffer();
+        } catch (e) {
+            return buf;
+        }
+    }
+
+    const isOnlineMode = await validateOnlineMode(username);
+
+    if (!isOnlineMode.status) {
+        try {
+            const img = await tryLoad(`https://littleskin.cn/avatar/player/${username}`);
             if (img) return img;
         } catch (e) {}
     } else {
-        // 正版模式：依次尝试 xzt 和 mineskin
         try {
             const url =
                 `https://land.wupeng1.top/api/generate/${selected.model}` +
                 `/mojang/${username}` +
                 `?type=${selected.type}&scale=${selected.scale}`;
-
             const img = await tryLoad(url);
             if (img) return img;
-        } catch (e) {
-            // xzt 服务不可用，继续 fallback
-        }
+        } catch (e) {}
         try {
-            const img = await tryLoad(
-                `https://mineskin.eu/helm/${username}`
-            );
+            const img = await tryLoad(`https://mineskin.eu/helm/${username}`);
             if (img) return img;
         } catch (e) {}
     }
-    // 本地 Steve 最终兜底
-    return fs.readFileSync(path.join(path_utils.get_project_root_path(), "/service/minecraft_service/data/steve.png") );
+
+    const stevePath = path.join(path_utils.get_project_root_path(), "/service/minecraft_service/data/steve.png");
+    const steveBuf = fs.readFileSync(stevePath);
+    return await convertToPng(steveBuf);
 }
 

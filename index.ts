@@ -87,3 +87,11 @@ function init_console() {
 (() => main().then(() => {
     log_utils.logger("main", "main", "ChatBot 成功启动")
 }))()
+
+process.on("uncaughtException", (error)=>{
+    console.log(error)
+} )
+
+process.on("unhandledRejection", (reason, promise)=>{
+    console.log(reason, promise)
+} )

@@ -55,8 +55,6 @@ export class init {
                     send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id),Structs.text("Bot暂未连接至服务器")], data.origin_object)
                     return
                 }
-                const bot_temp = game_instance_temp.bot
-
                 let settled = false
 
                 const on_message = async (game_data: any) => {
@@ -117,7 +115,7 @@ export class init {
                 }
 
                 game_instance_temp.event.on("message", on_message)
-                bot_temp.chat(`/money ${player_name}`)
+                game_instance_temp.send_message(`/money ${player_name}`)
             }
         }
     }

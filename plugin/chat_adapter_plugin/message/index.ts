@@ -53,7 +53,7 @@ export class init {
                     .where(and(eq(table.position, "chat"), eq(table.message_type, "public")))
                     .get()
                 const total_page = Math.ceil(total_count.total / count1)
-                const image = renderChatHistory(messages, page, total_page)
+                const image = renderChatHistory(messages, { page, totalPage: total_page, maxItems: count1, sortByTime: false })
                 send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id) ,Structs.image(image)], data.origin_object)
             }
         }
