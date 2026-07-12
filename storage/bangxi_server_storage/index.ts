@@ -119,6 +119,7 @@ const user_table = sqliteTable("user", {
     address_list: text("address_list").default("[]"),
     message_count: integer("message_count").default(0),
     online_time: integer("online_time").default(0),
+    first_record_time: text("first_record_time").default(new Date().toISOString()),
     online_session: text("online_session").default("[]"),
     role: text("role").default("member"),
     create_time: text("create_time").notNull(),
@@ -206,6 +207,7 @@ export class init {
             this.orm.insert(user_table).values({
                 username,
                 create_time: new Date().toISOString(),
+                first_record_time: new Date().toISOString(),
             }).run()
         }
     }
