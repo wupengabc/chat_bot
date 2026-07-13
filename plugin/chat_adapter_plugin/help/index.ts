@@ -1,6 +1,6 @@
 import {help} from "../../type.js";
 import {send_message} from "../../../chat_adapter/index.js";
-import {get_chat_adapter_prefix, help_list, permission_map} from "../../index.js";
+import {get_chat_adapter_prefix, help_list, permission_map, acquire_plugin_lock, release_plugin_lock} from "../../index.js";
 import {Structs} from "node-napcat-ts";
 const currentUrl = new URL(import.meta.url)
 const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
@@ -22,17 +22,27 @@ export class init {
     constructor() {}
     event_handler(event: any, data: any) {
         if (data.adapter_platform === "chat_adapter") {
-            if (data.raw_message.startsWith(this.command_start)) {
-                const page = parseInt(data.raw_message.split(" ")[1]) || 1
-                const chat_adapter_help = help_list.filter(item => item.platform === "chat_adapter")
-                const total_page = Math.ceil(chat_adapter_help.length / this.help_list_page_size)
-                const page_list_send = chat_adapter_help.slice((page - 1) * this.help_list_page_size, page * this.help_list_page_size)
-                const buffer = renderCommandHelp(page_list_send, page, total_page, {
-                    width: 600
-                })
-                if (buffer) {
-                    const message = [Structs.at(data.sender.user_id),Structs.image(buffer)]
-                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, message, data.origin_object)
+            if (data.raw_message.split(" ")[0] === this.command_start) {
+                const user_id = data.sender.user_id.toString()
+                if (!acquire_plugin_lock(user_id)) {
+                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                        [Structs.at(data.sender.user_id), Structs.text("请等待当前操作完成后再试")], data.origin_object)
+                    return
+                }
+                try {
+                    const page = parseInt(data.raw_message.split(" ")[1]) || 1
+                    const chat_adapter_help = help_list.filter(item => item.platform === "chat_adapter")
+                    const total_page = Math.ceil(chat_adapter_help.length / this.help_list_page_size)
+                    const page_list_send = chat_adapter_help.slice((page - 1) * this.help_list_page_size, page * this.help_list_page_size)
+                    const buffer = renderCommandHelp(page_list_send, page, total_page, {
+                        width: 600
+                    })
+                    if (buffer) {
+                        const message = [Structs.at(data.sender.user_id),Structs.image(buffer)]
+                        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, message, data.origin_object)
+                    }
+                } finally {
+                    release_plugin_lock(user_id)
                 }
             }
         }

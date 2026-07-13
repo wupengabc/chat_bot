@@ -18,11 +18,56 @@ export class init {
     private isReconnecting = false
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null
     private isStopped = false
+    private config: Record<string, unknown> = {}
     private logger = (msg: string, level: LoggerType)=>{
         game_adapter_logger("mineflayer", msg, level)
     }
 
+    /** 声明控制台命令 */
+    public console_commands = {
+        send_message: {
+            description: "向游戏内发送消息",
+            args: ["message"],
+            handler: (args: string[]) => {
+                const message = args.join(" ")
+                if (!message) {
+                    return "用法: /game select mineflayer config <config_name> send_message <message>"
+                }
+                if (this.status !== "running") {
+                    return `错误: bot 未运行（当前状态: ${this.status}）`
+                }
+                try {
+                    const success = this.send_message(message)
+                    return success 
+                        ? `成功发送消息: ${message}` 
+                        : "发送失败: bot 未运行"
+                } catch (error: any) {
+                    return `发送消息失败: ${error.message}`
+                }
+            }
+        },
+        status: {
+            description: "查看 bot 状态",
+            args: [],
+            handler: () => {
+                const info = [
+                    `状态: ${this.status}`,
+                    `实例名: ${this.config.name}`,
+                    `服务器: ${this.config.host}:${this.config.port}`,
+                    `用户名: ${this.config.username}`,
+                    `重连次数: ${this.reconnectCount}`,
+                ]
+                if (this.status === "running" && this.bot) {
+                    const players = Object.values(this.bot.players)
+                    info.push(`在线玩家数: ${players.length}`)
+                }
+                return info.join("\n")
+            }
+        }
+    }
+
     constructor(config: Record<string, unknown>) {
+        this.config = config
         this.start(config)
     }
 

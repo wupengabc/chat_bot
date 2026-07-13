@@ -3,9 +3,10 @@ import path from "node:path";
 import fs from "fs";
 import Database from "better-sqlite3";
 import {integer, sqliteTable, text} from "drizzle-orm/sqlite-core";
-import {eq, sql, SQLWrapper} from "drizzle-orm";
+import {eq, and, sql, desc, SQLWrapper} from "drizzle-orm";
 import {orm_utils} from "../../utils/orm_utils.js";
 import {drizzle} from "drizzle-orm/better-sqlite3";
+import {storage_logger} from "../index.js";
 
 interface ChatInfo {
     area?: string
@@ -119,7 +120,7 @@ const user_table = sqliteTable("user", {
     address_list: text("address_list").default("[]"),
     message_count: integer("message_count").default(0),
     online_time: integer("online_time").default(0),
-    first_record_time: text("first_record_time").default(new Date().toISOString()),
+    first_record_time: text("first_record_time"),
     online_session: text("online_session").default("[]"),
     role: text("role").default("member"),
     create_time: text("create_time").notNull(),
@@ -150,6 +151,35 @@ export class init {
         player_name_list: [] as string[],
         session_start: {} as Record<string, number>,
         last_seen: {} as Record<string, number>,
+    }
+
+    public user_permission_map = {
+        "member": 0,
+        "admin": 1,
+        "owner": 2
+    }
+
+    /** 声明控制台命令 */
+    public console_commands = {
+        change_permission: {
+            description: "修改用户权限",
+            args: ["username", "permission(member|admin|owner)"],
+            handler: (args: string[]) => {
+                const [username, permission] = args
+                if (!username || !permission) {
+                    return "用法: /storage select bangxi_server_storage change_permission <username> <permission>"
+                }
+                if (!["member", "admin", "owner"].includes(permission)) {
+                    return `错误: 权限必须是 member, admin 或 owner`
+                }
+                try {
+                    this.change_permission(username, permission as keyof typeof this.user_permission_map)
+                    return `成功将用户 ${username} 的权限修改为 ${permission}`
+                } catch (error: any) {
+                    return `修改权限失败: ${error.message}`
+                }
+            }
+        }
     }
 
     constructor() {
@@ -212,15 +242,50 @@ export class init {
         }
     }
 
-    /** 关闭玩家会话：计算时长，更新 online_time 和 online_session */
-    private close_session(username: string, start_time: number, end_time: number) {
-        const duration = Math.floor((end_time - start_time) / 1000)
-        const session = {
-            start: new Date(start_time).toISOString(),
-            end: new Date(end_time).toISOString(),
-            duration,
-        }
+    /** 迁移旧格式的 session 数据：将 {start, end, duration} 转换为新格式 */
+    private migrate_old_sessions(sessions: any[]): any[] {
+        return sessions.map(session => {
+            // 如果已经是新格式（有 start, end, duration 三个字段且 end 可能为 null），则保持不变
+            // 如果是旧格式（start, end, duration 都有值但可能缺少 null 的情况），也保持不变
+            if (session.start && session.end && session.duration !== undefined) {
+                return session
+            }
+            // 其他异常格式，尝试保留
+            return session
+        })
+    }
 
+    /** 开启新会话：在 online_session 中追加一个开放的 session */
+    private start_session(username: string, start_time: number) {
+        this.ensure_user_exists(username)
+
+        const row = this.orm.select({
+            id: user_table.id,
+            online_session: user_table.online_session,
+        })
+            .from(user_table)
+            .where(eq(user_table.username, username))
+            .get() as { id: number; online_session: string } | undefined
+
+        if (!row) return
+
+        const online_session_list = this.migrate_old_sessions(JSON.parse(row.online_session || "[]"))
+        online_session_list.push({
+            start: new Date(start_time).toISOString(),
+            end: null,
+            duration: null,
+        })
+
+        this.orm.update(user_table)
+            .set({
+                online_session: JSON.stringify(online_session_list),
+            })
+            .where(eq(user_table.id, row.id))
+            .run()
+    }
+
+    /** 关闭玩家会话：找到最后一个开放的 session，计算时长并更新 */
+    private close_session(username: string, end_time: number) {
         const row = this.orm.select({
             id: user_table.id,
             online_time: user_table.online_time,
@@ -230,19 +295,27 @@ export class init {
             .where(eq(user_table.username, username))
             .get() as { id: number; online_time: number; online_session: string } | undefined
 
-        if (!row) {
-            this.orm.insert(user_table).values({
-                username,
-                online_time: duration,
-                online_session: JSON.stringify([session]),
-                create_time: new Date().toISOString(),
-            }).run()
-            return
+        if (!row) return
+
+        const online_session_list = this.migrate_old_sessions(JSON.parse(row.online_session || "[]"))
+        
+        // 找到最后一个未关闭的 session（end 为 null）
+        const last_open_index = online_session_list.findLastIndex((s: any) => s.end === null)
+        
+        if (last_open_index === -1) return
+
+        const session = online_session_list[last_open_index]
+        const start_time = new Date(session.start).getTime()
+        const duration = Math.floor((end_time - start_time) / 1000)
+
+        // 更新该 session
+        online_session_list[last_open_index] = {
+            start: session.start,
+            end: new Date(end_time).toISOString(),
+            duration,
         }
 
         const online_time = row.online_time || 0
-        const online_session_list = JSON.parse(row.online_session || "[]") as any[]
-        online_session_list.push(session)
 
         this.orm.update(user_table)
             .set({
@@ -276,10 +349,8 @@ export class init {
                 const seen = last_seen[username]
                 if (seen !== undefined && now - seen >= init.SESSION_GAP_MS) {
                     // 距上次检测已超过 1h（bot 断线重连等），在 last_seen 时间点关闭旧会话，开启新会话
-                    const start = session_start[username]
-                    if (start) {
-                        this.close_session(username, start, seen)
-                    }
+                    this.close_session(username, seen)
+                    this.start_session(username, now)
                     session_start[username] = now
                     changed = true
                 }
@@ -293,11 +364,8 @@ export class init {
 
                 if (seen !== undefined && now - seen >= init.OFFLINE_TIMEOUT_MS) {
                     // 消失超过 30s，判定为真正下线
-                    const start = session_start[username]
-                    if (start) {
-                        this.close_session(username, start, now)
-                        delete session_start[username]
-                    }
+                    this.close_session(username, now)
+                    delete session_start[username]
                     delete last_seen[username]
                     changed = true
                 } else {
@@ -312,9 +380,10 @@ export class init {
         for (let i = 0; i < new_player_name_list.length; i++) {
             const username = new_player_name_list[i]
             if (!still_online.includes(username)) {
+                this.ensure_user_exists(username)
+                this.start_session(username, now)
                 session_start[username] = now
                 last_seen[username] = now
-                this.ensure_user_exists(username)
                 still_online.push(username)
                 still_online_display.push(new_display_name_list[i])
                 changed = true
@@ -463,5 +532,112 @@ export class init {
             })
             .where(eq(user_table.username, usernameValue))
             .run();
+    }
+
+    change_permission(username: string, permission: keyof typeof this.user_permission_map): void {
+        if (!this.user_permission_map.hasOwnProperty(permission)) {
+            throw new Error("错误的权限类型")
+        }
+        this.ensure_user_exists(username)
+        this.orm.update(user_table)
+            .set({ role: permission })
+            .where(eq(user_table.username, username))
+            .run();
+    }
+
+    check_point(username: string, point: number) {
+        this.ensure_user_exists(username)
+        const row = this.orm.select({point: user_table.point})
+            .from(user_table)
+            .where(eq(user_table.username, username))
+            .get()
+        if (row) {
+            if (row.point >= point * 100) {
+                return { status: true, point: row.point / 100 }
+            } else {
+                return { status: false, point: row.point / 100 }
+            }
+        } else {
+            return { status: false, point: 0 }
+        }
+    }
+
+    del_point(username: string, point: number) {
+        this.ensure_user_exists(username)
+        this.orm.update(user_table)
+            .set({point: sql`${user_table.point} - ${point * 100}`})
+            .where(eq(user_table.username, username))
+            .run()
+    }
+
+    add_point(username: string, point: number) {
+        this.ensure_user_exists(username)
+        this.orm.update(user_table)
+            .set({point: sql`${user_table.point} + ${point * 100}`})
+            .where(eq(user_table.username, username))
+            .run()
+    }
+
+    /** 查询玩家完整信息，不存在则返回 null */
+    get_user_info(username: string) {
+        const row = this.orm.select()
+            .from(user_table)
+            .where(eq(user_table.username, username))
+            .get()
+        if (!row) return null
+
+        const online_session = JSON.parse(row.online_session || "[]") as { start: string, end: string | null, duration: number | null }[]
+
+        // 从 online_session 中提取最后一次加入和离开时间
+        let last_join_time: string | null = null
+        let last_leave_time: string | null = null
+        if (online_session.length > 0) {
+            const last_session = online_session[online_session.length - 1]
+            last_join_time = last_session.start
+            if (last_session.end) {
+                last_leave_time = last_session.end
+            } else {
+                // 最后一个 session 未关闭，说明当前在线，往前找一个已关闭的
+                for (let i = online_session.length - 2; i >= 0; i--) {
+                    if (online_session[i].end) {
+                        last_leave_time = online_session[i].end!
+                        break
+                    }
+                }
+            }
+        }
+
+        return {
+            username: row.username as string,
+            money: row.money as number,
+            money_history: JSON.parse(row.money_history || "[]") as { money: unknown, timestamp: string }[],
+            point: (row.point || 0) as number,
+            address_list: JSON.parse(row.address_list || "[]") as string[],
+            message_count: (row.message_count || 0) as number,
+            online_time: (row.online_time || 0) as number,
+            first_record_time: (row.first_record_time || row.create_time) as string,
+            online_session,
+            last_join_time,
+            last_leave_time,
+            role: (row.role || "member") as string,
+            create_time: row.create_time as string,
+        }
+    }
+
+    /** 查询玩家最近的公开聊天消息（默认3条） */
+    get_recent_messages(username: string, limit: number = 3) {
+        return this.orm.select({
+            content: message_table.content,
+            area: message_table.area,
+            create_time: message_table.create_time,
+        })
+            .from(message_table)
+            .where(and(
+                eq(message_table.username, username),
+                eq(message_table.message_type, "public"),
+            ))
+            .orderBy(desc(message_table.id))
+            .limit(limit)
+            .all() as { content: string, area: string, create_time: string }[]
     }
 }

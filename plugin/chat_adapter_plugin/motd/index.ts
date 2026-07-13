@@ -1,5 +1,5 @@
 import { help } from "../../type.js";
-import {get_chat_adapter_prefix, plugin_logger} from "../../index.js";
+import {get_chat_adapter_prefix, plugin_logger, acquire_plugin_lock, release_plugin_lock} from "../../index.js";
 import queryMinecraftMotd from "../../../service/minecraft_service/motd.js";
 import {send_message} from "../../../chat_adapter/index.js";
 import {Structs} from "node-napcat-ts";
@@ -23,7 +23,13 @@ export class init {
     }
     async event_handler(event: any, data: any) {
         if (data.adapter_platform === "chat_adapter") {
-            if (data.raw_message.startsWith(this.command_start)) {
+            if (data.raw_message.split(" ")[0] === this.command_start) {
+                const user_id = data.sender.user_id.toString()
+                if (!acquire_plugin_lock(user_id)) {
+                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                        [Structs.at(data.sender.user_id), Structs.text("请等待当前操作完成后再试")], data.origin_object)
+                    return
+                }
                 try {
                     const ip_address = data.raw_message.split(" ")[1] || "mc.bangxi.top:25565";
                     const address = ip_address.split(":")[0]
@@ -43,6 +49,8 @@ export class init {
                     const error_message = [Structs.at(data.sender.user_id), Structs.text(`查询服务器MOTD信息失败: ${error.message}`)]
                     send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, error_message, data.origin_object)
                     plugin_logger("motd", error.message, "error")
+                } finally {
+                    release_plugin_lock(user_id)
                 }
             }
         }

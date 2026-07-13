@@ -33,6 +33,123 @@ export const permission_map = {
     2: "管理员",
 }
 
+/* ===================== 用户插件锁 ===================== */
+
+/** 锁的超时时间（毫秒），2 分钟后自动释放 */
+const LOCK_TIMEOUT = 2 * 60 * 1000
+
+/** 释放后的冷却时间（毫秒），期间仍阻止获取，防止同步插件被快速连刷 */
+const LOCK_COOLDOWN = 3 * 1000
+
+interface LockEntry {
+    acquired_at: number
+    timer: ReturnType<typeof setTimeout>
+    /** true 表示已被显式释放，正在冷却期，定时器到期后静默删除 */
+    released: boolean
+}
+
+/**
+ * 共享锁 —— 所有插件公用一把锁。
+ * key = user_id，value = 锁信息。
+ * 同一用户在任何插件上的操作未完成时，其他插件无法为其服务，防止同时触发大量监听器导致卡顿。
+ * 释放后进入冷却期（LOCK_COOLDOWN），冷却期内仍阻止获取。
+ */
+export const user_plugin_locks = new Map<string, LockEntry>()
+
+/**
+ * 命名锁 —— 供插件内部独立使用的锁（如 bind 防止重复绑定请求）。
+ * key = `${name}:${user_id}`，value = 锁信息。
+ */
+export const user_named_locks = new Map<string, LockEntry>()
+
+/**
+ * 尝试获取共享插件锁。
+ * @returns true 表示获取成功；false 表示该用户已有正在进行的插件操作或处于冷却期。
+ */
+export function acquire_plugin_lock(user_id: string | number): boolean {
+    const key = String(user_id)
+    if (user_plugin_locks.has(key)) {
+        return false
+    }
+    const entry: LockEntry = { acquired_at: Date.now(), timer: null as any, released: false }
+    entry.timer = setTimeout(() => {
+        if (!entry.released) {
+            plugin_logger("lock", `用户 ${user_id} 的共享插件锁因超时(${LOCK_TIMEOUT / 1000}s)自动释放`, "warn")
+        }
+        user_plugin_locks.delete(key)
+    }, LOCK_TIMEOUT)
+    user_plugin_locks.set(key, entry)
+    return true
+}
+
+/**
+ * 释放共享插件锁。
+ * @param cooldown_ms 释放后的冷却时间，冷却期内仍阻止获取。默认 LOCK_COOLDOWN（3秒）。传 0 表示立即释放。
+ */
+export function release_plugin_lock(user_id: string | number, cooldown_ms: number = LOCK_COOLDOWN): void {
+    const key = String(user_id)
+    const lock = user_plugin_locks.get(key)
+    if (!lock) return
+    clearTimeout(lock.timer)
+    lock.released = true
+    if (cooldown_ms > 0) {
+        lock.timer = setTimeout(() => {
+            user_plugin_locks.delete(key)
+        }, cooldown_ms)
+    } else {
+        user_plugin_locks.delete(key)
+    }
+}
+
+/** 检查共享插件锁是否被占用 */
+export function is_plugin_locked(user_id: string | number): boolean {
+    return user_plugin_locks.has(String(user_id))
+}
+
+/**
+ * 尝试获取命名锁（供插件内部独立使用）。
+ * @returns true 表示获取成功；false 表示该锁已被占用或处于冷却期。
+ */
+export function acquire_named_lock(name: string, user_id: string | number): boolean {
+    const key = `${name}:${user_id}`
+    if (user_named_locks.has(key)) {
+        return false
+    }
+    const entry: LockEntry = { acquired_at: Date.now(), timer: null as any, released: false }
+    entry.timer = setTimeout(() => {
+        if (!entry.released) {
+            plugin_logger(name, `用户 ${user_id} 的命名锁 ${name} 因超时(${LOCK_TIMEOUT / 1000}s)自动释放`, "warn")
+        }
+        user_named_locks.delete(key)
+    }, LOCK_TIMEOUT)
+    user_named_locks.set(key, entry)
+    return true
+}
+
+/**
+ * 释放命名锁。
+ * @param cooldown_ms 释放后的冷却时间，冷却期内仍阻止获取。默认 LOCK_COOLDOWN（3秒）。传 0 表示立即释放。
+ */
+export function release_named_lock(name: string, user_id: string | number, cooldown_ms: number = LOCK_COOLDOWN): void {
+    const key = `${name}:${user_id}`
+    const lock = user_named_locks.get(key)
+    if (!lock) return
+    clearTimeout(lock.timer)
+    lock.released = true
+    if (cooldown_ms > 0) {
+        lock.timer = setTimeout(() => {
+            user_named_locks.delete(key)
+        }, cooldown_ms)
+    } else {
+        user_named_locks.delete(key)
+    }
+}
+
+/** 检查命名锁是否被占用 */
+export function is_named_locked(name: string, user_id: string | number): boolean {
+    return user_named_locks.has(`${name}:${user_id}`)
+}
+
 /** 目录名 → 默认订阅的分发器 */
 const plugin_dirs: Record<string, string[]> = {
     "chat_adapter_plugin": ["chat_adapter"],
@@ -47,7 +164,11 @@ export function plugin_handle_adapter_event(adapter: string, event: string, data
     for (const config_map of running_plugins.values()) {
         for (const { instance, adapters } of config_map.values()) {
             if (adapters.includes(adapter)) {
-                instance.event_handler?.(event, { adapter_platform: adapter, ...data })
+                try {
+                    instance.event_handler?.(event, { adapter_platform: adapter, ...data })
+                } catch (error) {
+                    plugin_logger(instance.config.name, `插件 ${instance.config.name} 处理事件 ${event} 时出错: ${error}`, "error")
+                }
             }
         }
     }

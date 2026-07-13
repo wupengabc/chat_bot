@@ -12,7 +12,11 @@ export function storage_logger(plugin: string, msg: string, type: LoggerType) {
 
 export function storage_handle_adapter_event(adapter: string, event: string, data: any) {
     for (const [plugin, storage] of running_storage) {
-        storage.event_handler(event, {adapter_platform: adapter, ...data})
+        try {
+            storage.event_handler(event, {adapter_platform: adapter, ...data})
+        } catch (error) {
+            storage_logger(plugin, `storage ${plugin} 处理事件 ${event} 时出错: ${error}`, "error")
+        }
     }
 }
 
@@ -23,7 +27,7 @@ async function load_storage_from_dir(dir_path: string) {
         const module_url = pathToFileURL(path.join(dir_path, "index.js")).href + `?t=${Date.now()}`
         const {init} = await import(module_url)
         const storage = new init()
-        storage_logger(dir_name, `成功启动 ${dir_path} storage`, "info")
+        storage_logger(dir_name, `成功启动 ${path.basename(dir_path)} storage`, "info")
         running_storage.set(dir_name, storage)
     } catch (error) {
         storage_logger(dir_name, `失败启动 ${dir_path} storage: ${error}`, "error")
@@ -105,3 +109,55 @@ export async function reload_storage(storage_name?: string) {
 export function get_storage(plugin: string) {
     return running_storage.get(plugin)
 }
+
+/**
+ * 执行 storage 的控制台命令
+ * @param storage_name storage 名称
+ * @param command_name 命令名称
+ * @param args 命令参数
+ */
+export function exec_storage_command(storage_name: string, command_name: string, args: string[]): string {
+    const storage = running_storage.get(storage_name)
+    if (!storage) {
+        return `未找到 storage: ${storage_name}`
+    }
+    
+    if (!storage.console_commands) {
+        return `storage ${storage_name} 没有注册任何控制台命令`
+    }
+    
+    const command = storage.console_commands[command_name]
+    if (!command) {
+        const available = Object.keys(storage.console_commands).join(", ")
+        return `storage ${storage_name} 没有命令 ${command_name}。可用命令: ${available}`
+    }
+    
+    try {
+        return command.handler(args)
+    } catch (error: any) {
+        return `执行命令失败: ${error.message}`
+    }
+}
+
+/**
+ * 列出 storage 的可用控制台命令
+ */
+export function list_storage_commands(storage_name: string): string[] {
+    const storage = running_storage.get(storage_name)
+    if (!storage) {
+        return [`未找到 storage: ${storage_name}`]
+    }
+    
+    if (!storage.console_commands) {
+        return [`storage ${storage_name} 没有注册任何控制台命令`]
+    }
+    
+    const lines: string[] = []
+    lines.push(`storage ${storage_name} 的可用命令:`)
+    for (const [cmd_name, cmd] of Object.entries(storage.console_commands)) {
+        const cmd_obj = cmd as any
+        lines.push(`  - ${cmd_name} ${cmd_obj.args?.join(" ") || ""} - ${cmd_obj.description || "无描述"}`)
+    }
+    return lines
+}
+

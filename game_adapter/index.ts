@@ -156,3 +156,67 @@ export async function reload_game_adapter(adapter_name?: string) {
 export function get_game_adapter(adapter_name: string, config_name: string) {
     return running_game_adapters.get(adapter_name)?.get(config_name)
 }
+
+/**
+ * 执行 game_adapter 实例的控制台命令
+ * @param adapter_name 适配器名称
+ * @param config_name 配置名称（实例名）
+ * @param command_name 命令名称
+ * @param args 命令参数
+ */
+export function exec_game_adapter_command(adapter_name: string, config_name: string, command_name: string, args: string[]): string {
+    const config_map = running_game_adapters.get(adapter_name)
+    if (!config_map) {
+        return `未找到 game_adapter: ${adapter_name}`
+    }
+    
+    const instance = config_map.get(config_name)
+    if (!instance) {
+        const available = Array.from(config_map.keys()).join(", ")
+        return `未找到配置实例: ${config_name}。可用实例: ${available}`
+    }
+    
+    if (!instance.console_commands) {
+        return `game_adapter ${adapter_name} 实例 ${config_name} 没有注册任何控制台命令`
+    }
+    
+    const command = instance.console_commands[command_name]
+    if (!command) {
+        const available = Object.keys(instance.console_commands).join(", ")
+        return `实例 ${config_name} 没有命令 ${command_name}。可用命令: ${available}`
+    }
+    
+    try {
+        return command.handler(args)
+    } catch (error: any) {
+        return `执行命令失败: ${error.message}`
+    }
+}
+
+/**
+ * 列出 game_adapter 实例的可用控制台命令
+ */
+export function list_game_adapter_commands(adapter_name: string, config_name: string): string[] {
+    const config_map = running_game_adapters.get(adapter_name)
+    if (!config_map) {
+        return [`未找到 game_adapter: ${adapter_name}`]
+    }
+    
+    const instance = config_map.get(config_name)
+    if (!instance) {
+        const available = Array.from(config_map.keys()).join(", ")
+        return [`未找到配置实例: ${config_name}。可用实例: ${available}`]
+    }
+    
+    if (!instance.console_commands) {
+        return [`game_adapter ${adapter_name} 实例 ${config_name} 没有注册任何控制台命令`]
+    }
+    
+    const lines: string[] = []
+    lines.push(`game_adapter ${adapter_name} 实例 ${config_name} 的可用命令:`)
+    for (const [cmd_name, cmd] of Object.entries(instance.console_commands)) {
+        const cmd_obj = cmd as any
+        lines.push(`  - ${cmd_name} ${cmd_obj.args?.join(" ") || ""} - ${cmd_obj.description || "无描述"}`)
+    }
+    return lines
+}

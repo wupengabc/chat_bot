@@ -1,4 +1,4 @@
-import {get_chat_adapter_prefix} from "../../index.js";
+import {get_chat_adapter_prefix, acquire_plugin_lock, release_plugin_lock} from "../../index.js";
 import { help } from "../../type.js";
 import {get_game_adapter} from "../../../game_adapter/index.js";
 import {send_message} from "../../../chat_adapter/index.js";
@@ -12,6 +12,7 @@ const { renderServerMoneyRanking } = await import(utilsUrl.href)
 
 interface PendingTask {
     cleanup: () => void
+    user_id: string
 }
 
 export class init {
@@ -34,37 +35,50 @@ export class init {
     on_unload() {
         for (const task of this.pending_tasks) {
             task.cleanup()
+            release_plugin_lock(task.user_id, 0)
         }
         this.pending_tasks.length = 0
     }
 
     event_handler(event: string, data: any) {
         if (data.adapter_platform === "chat_adapter") {
-            if (data.raw_message.startsWith(this.command_start)) {
+            if (data.raw_message.split(" ")[0] === this.command_start) {
+                const user_id = data.sender.user_id.toString()
+                if (!acquire_plugin_lock(user_id)) {
+                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                        [Structs.at(data.sender.user_id), Structs.text("请等待当前操作完成后再试")], data.origin_object)
+                    return
+                }
                 const page_str = data.raw_message.split(" ")[1] || "1"
                 const page = parseInt(page_str)
                 if (isNaN(page) || page < 1 || page > 2) {
                     send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
                         [Structs.at(data.sender.user_id), Structs.text("页码无效，请输入1或2")], data.origin_object)
+                    release_plugin_lock(user_id)
                     return
                 }
                 const game_instance = get_game_adapter("mineflayer", "bangxi")
                 if (game_instance.status !== "running") {
                     send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
                         [Structs.at(data.sender.user_id), Structs.text("Bot暂未连接至服务器")], data.origin_object)
+                    release_plugin_lock(user_id)
                     return
                 }
+
+                send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                    [Structs.at(data.sender.user_id), Structs.text("正在开始查询金币排行榜，请稍候...")], data.origin_object)
 
                 let settled = false
                 const collected_lines: string[] = []
                 let timer: ReturnType<typeof setTimeout>
 
-                const task: PendingTask = { cleanup: () => {} }
+                const task: PendingTask = { cleanup: () => {}, user_id }
                 this.pending_tasks.push(task)
 
                 const remove_pending = () => {
                     const idx = this.pending_tasks.indexOf(task)
                     if (idx >= 0) this.pending_tasks.splice(idx, 1)
+                    release_plugin_lock(user_id)
                 }
 
                 const cleanup = () => {

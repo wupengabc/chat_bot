@@ -1,4 +1,4 @@
-import {get_chat_adapter_prefix} from "../../index.js";
+import {get_chat_adapter_prefix, acquire_plugin_lock, release_plugin_lock} from "../../index.js";
 import { help } from "../../type.js";
 import {send_message} from "../../../chat_adapter/index.js";
 import {Structs} from "node-napcat-ts";
@@ -15,6 +15,7 @@ interface PendingTask {
     game_instance: any
     listener: (data: any) => void
     timer: ReturnType<typeof setTimeout>
+    user_id: string
 }
 
 export class init {
@@ -23,7 +24,7 @@ export class init {
         keyword: "money",
         description: "查询玩家金币数量",
         permission: 0,
-        args: ["玩家名"],
+        args: ["玩家名(可选, 默认查询自己)"],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword
@@ -38,21 +39,39 @@ export class init {
         for (const task of this.pending_tasks) {
             clearTimeout(task.timer)
             task.game_instance.event.off("message", task.listener)
+            release_plugin_lock(task.user_id, 0)
         }
         this.pending_tasks.length = 0
     }
 
     event_handler(event: string, data: { adapter_platform: any; raw_message: string; sender: { user_id: any; id: any; }; adapter: any; instance_name: any; receiver: { type: any; }; origin_object: any; }) {
         if (data.adapter_platform === "chat_adapter") {
-            if (data.raw_message.startsWith(this.command_start)) {
-                const player_name = data.raw_message.split(" ")[1]
-                if (!player_name) {
-                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id),Structs.text("请输入玩家名")], data.origin_object)
+            if (data.raw_message.split(" ")[0] === this.command_start) {
+                const user_id = data.sender.user_id.toString()
+                if (!acquire_plugin_lock(user_id)) {
+                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id),Structs.text("请等待当前操作完成后再试")], data.origin_object)
                     return
                 }
+                let player_name = data.raw_message.split(" ")[1]
+                if (!player_name) {
+                    const user_storage = get_storage("chat_permission_storage")
+                    if (!user_storage) {
+                        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id),Structs.text("请输入玩家名")], data.origin_object)
+                        release_plugin_lock(user_id)
+                        return
+                    }
+                    player_name = user_storage.get_user_info(user_id)?.game_id || ""
+                    if (!player_name) {
+                        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id),Structs.text("你暂未绑定游戏id, 查询金币请输入玩家名")], data.origin_object)
+                        release_plugin_lock(user_id)
+                        return
+                    }
+                }
+                send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id),Structs.text("正在开始查询玩家金币数量...")], data.origin_object)
                 const game_instance_temp = get_game_adapter("mineflayer", "bangxi")
                 if (game_instance_temp.status !== "running") {
                     send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id, [Structs.at(data.sender.user_id),Structs.text("Bot暂未连接至服务器")], data.origin_object)
+                    release_plugin_lock(user_id)
                     return
                 }
                 let settled = false
@@ -106,12 +125,13 @@ export class init {
                         [Structs.at(data.sender.user_id), Structs.text("查询超时，请稍后重试")], data.origin_object)
                 }, 5000)
 
-                const task: PendingTask = { game_instance: game_instance_temp, listener: on_message, timer }
+                const task: PendingTask = { game_instance: game_instance_temp, listener: on_message, timer, user_id }
                 this.pending_tasks.push(task)
 
                 const remove_pending = () => {
                     const idx = this.pending_tasks.indexOf(task)
                     if (idx >= 0) this.pending_tasks.splice(idx, 1)
+                    release_plugin_lock(user_id)
                 }
 
                 game_instance_temp.event.on("message", on_message)
