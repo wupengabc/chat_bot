@@ -25,7 +25,7 @@ export class init {
         keyword: "info",
         description: "获取玩家详细信息",
         permission: 0,
-        args: ["玩家名(可选, 默认查询自己)"],
+        args: ["玩家名(可选, 默认查询自己)(查询自己50积分 查询其他玩家100积分)"],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword
@@ -72,6 +72,13 @@ export class init {
                         release_plugin_lock(user_id)
                         return
                     }
+                }
+
+                if (bound_game_id !== "wupengabc" && player_name === "wupengabc") {
+                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                        [Structs.at(data.sender.user_id), Structs.text("该玩家不允许被查询")], data.origin_object)
+                    release_plugin_lock(user_id)
+                    return
                 }
 
                 // 判断查自己还是查别人，计算费用
