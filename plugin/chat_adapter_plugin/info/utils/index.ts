@@ -21,9 +21,16 @@ export interface PlayerMoneyHistoryItem {
 
 export interface PlayerInfoData {
     avatar?: Buffer | Uint8Array | null;
-    avatarMimeType?: 'image/png' | 'image/jpeg' | 'image/webp';
+
+    avatarMimeType?:
+        | 'image/png'
+        | 'image/jpeg'
+        | 'image/webp';
 
     username: string | number;
+    role?: string | null;
+    is_online?: boolean | null;
+
     money: number | string;
 
     /**
@@ -36,33 +43,38 @@ export interface PlayerInfoData {
 
     /**
      * 接口原始在线时间，单位为秒。
-     * 渲染时自动转换为分钟。
+     * 渲染时自动转换成分钟。
      */
     online_time?: number | string | null;
-
-    role?: string | null;
-
-    /**
-     * true：在线
-     * false：离线
-     * null/undefined：状态未知
-     */
-    is_online?: boolean | null;
 
     first_record_time?: PlayerTimestamp;
     last_join_time?: PlayerTimestamp;
     last_leave_time?: PlayerTimestamp;
 
-    address_list?: Array<string | null | undefined> | null;
-    recent_messages?: PlayerRecentMessage[] | null;
-    money_history?: PlayerMoneyHistoryItem[] | null;
+    address_list?:
+        | Array<string | null | undefined>
+        | null;
 
-    money_source?: 'realtime' | 'history' | string | null;
+    recent_messages?:
+        | PlayerRecentMessage[]
+        | null;
+
+    money_history?:
+        | PlayerMoneyHistoryItem[]
+        | null;
+
+    money_source?:
+        | 'realtime'
+        | 'history'
+        | string
+        | null;
+
     money_time?: PlayerTimestamp;
 }
 
 export interface RenderPlayerCardOptions {
     outputWidth?: number;
+
     fontFiles?: string[];
     defaultFontFamily?: string;
 
@@ -72,30 +84,32 @@ export interface RenderPlayerCardOptions {
     maxRecentMessages?: number;
 
     /**
-     * 不携带时区信息的时间字符串如何解释。
+     * 没有明确时区的字符串如何解释。
      *
-     * utc：
-     * 按 UTC 解析，再转换为中国时区。
+     * utc:
+     * "2026-01-01 08:00:00" 被当作 UTC，
+     * 最终显示中国时间 16:00:00。
      *
-     * china：
-     * 直接按中国时区解析。
+     * china:
+     * "2026-01-01 08:00:00" 被当作中国时间，
+     * 最终仍显示 08:00:00。
      */
     naiveTimestampTimeZone?: 'utc' | 'china';
 
     /**
-     * 在线分钟数最多显示几位小数。
-     * 默认为 2。
+     * 在线分钟数最多保留几位小数。
      */
     onlineMinutesFractionDigits?: number;
 }
 
-interface OnlineStatusTheme {
+interface OnlineTheme {
     label: string;
     rawValue: string;
     background: string;
     foreground: string;
     indicator: string;
     symbol: string;
+    explanation: string;
 }
 
 interface AddressTag {
@@ -112,42 +126,50 @@ interface AddressLayout {
     tags: AddressTag[];
 }
 
-interface NormalizedMoneyHistoryItem {
+interface MoneyHistoryPoint {
     money: number;
     timestamp: PlayerTimestamp;
 }
 
-interface CardLayout {
-    width: number;
-    height: number;
+interface Layout {
+    svgWidth: number;
+    svgHeight: number;
 
-    pageMargin: number;
+    outerMargin: number;
+
     cardX: number;
     cardY: number;
     cardWidth: number;
     cardHeight: number;
 
     contentX: number;
-    contentWidth: number;
     contentRight: number;
+    contentWidth: number;
+    contentCenterX: number;
 
-    headerY: number;
+    headerDividerY: number;
+
     identityTitleY: number;
     identityCardY: number;
+    identityCardHeight: number;
 
     addressTitleY: number;
     addressCardY: number;
     addressCardHeight: number;
 
-    statisticsTitleY: number;
+    assetsTitleY: number;
     moneyCardY: number;
-    statisticsCardsY: number;
+    moneyCardHeight: number;
+    statisticCardsY: number;
+    statisticCardHeight: number;
 
     timeTitleY: number;
     timeCardY: number;
+    timeCardHeight: number;
 
     historyTitleY: number;
     historyCardY: number;
+    historyCardHeight: number;
 
     messagesTitleY: number;
     messagesCardY: number;
@@ -157,12 +179,16 @@ interface CardLayout {
 }
 
 const SVG_WIDTH = 900;
-const PAGE_MARGIN = 24;
+const OUTER_MARGIN = 24;
 const CONTENT_INSET = 28;
-const CONTENT_X = PAGE_MARGIN + CONTENT_INSET;
-const CONTENT_WIDTH =
-    SVG_WIDTH - PAGE_MARGIN * 2 - CONTENT_INSET * 2;
-const CONTENT_RIGHT = CONTENT_X + CONTENT_WIDTH;
+
+const CONTENT_X = OUTER_MARGIN + CONTENT_INSET;
+const CONTENT_RIGHT =
+    SVG_WIDTH - OUTER_MARGIN - CONTENT_INSET;
+const CONTENT_WIDTH = CONTENT_RIGHT - CONTENT_X;
+
+const SECTION_GAP = 28;
+const TITLE_TO_CARD_GAP = 30;
 
 function escapeXml(value: unknown): string {
     return String(value ?? '')
@@ -190,12 +216,13 @@ function clampInteger(
 
 function truncateText(
     value: unknown,
-    maximumLength: number
+    maximumLength: number,
+    fallback = '暂无'
 ): string {
     const text = String(value ?? '').trim();
 
     if (!text) {
-        return '暂无';
+        return fallback;
     }
 
     const characters = Array.from(text);
@@ -204,9 +231,11 @@ function truncateText(
         return text;
     }
 
-    return `${characters
-        .slice(0, maximumLength)
-        .join('')}…`;
+    return (
+        characters
+            .slice(0, maximumLength)
+            .join('') + '…'
+    );
 }
 
 function toFiniteNumber(
@@ -234,14 +263,14 @@ function toFiniteNumber(
         return null;
     }
 
-    const numericValue = Number(normalized);
+    const result = Number(normalized);
 
-    return Number.isFinite(numericValue)
-        ? numericValue
+    return Number.isFinite(result)
+        ? result
         : null;
 }
 
-function formatNumericValue(
+function formatNumeric(
     value: number,
     maximumFractionDigits = 2,
     minimumFractionDigits = 0
@@ -254,32 +283,22 @@ function formatNumericValue(
 
 function formatNumber(
     value: number | string | null | undefined,
-    maximumFractionDigits = 2,
-    minimumFractionDigits = 0
+    maximumFractionDigits = 2
 ): string {
     const numericValue = toFiniteNumber(value);
 
     if (numericValue === null) {
-        if (
-            value === null ||
-            value === undefined ||
-            value === ''
-        ) {
-            return '暂无';
-        }
-
-        return truncateText(value, 30);
+        return '暂无';
     }
 
-    return formatNumericValue(
+    return formatNumeric(
         numericValue,
-        maximumFractionDigits,
-        minimumFractionDigits
+        maximumFractionDigits
     );
 }
 
 /**
- * 真实积分 = 接口原始积分 / 100。
+ * 接口积分需要除以 100。
  */
 function formatRealPoint(
     rawPoint: number | string | null | undefined
@@ -290,73 +309,66 @@ function formatRealPoint(
         return '暂无';
     }
 
-    const actualPoint = numericPoint / 100;
+    const realPoint = numericPoint / 100;
 
-    return formatNumericValue(
-        actualPoint,
+    return formatNumeric(
+        realPoint,
         2,
-        Number.isInteger(actualPoint) ? 0 : 2
+        Number.isInteger(realPoint) ? 0 : 2
     );
 }
 
 /**
- * 在线时间的接口单位为秒。
- * 展示单位统一转换为分钟。
+ * 接口在线时间单位为秒，渲染时转换成分钟。
  */
 function formatOnlineMinutes(
     rawSeconds: number | string | null | undefined,
-    maximumFractionDigits: number
+    fractionDigits: number
 ): string {
-    const numericSeconds = toFiniteNumber(rawSeconds);
+    const seconds = toFiniteNumber(rawSeconds);
 
-    if (numericSeconds === null) {
+    if (seconds === null) {
         return '暂无';
     }
 
-    const minutes = numericSeconds / 60;
-    const fractionDigits = clampInteger(
-        maximumFractionDigits,
-        0,
-        6
-    );
+    const minutes = seconds / 60;
 
     return (
-        formatNumericValue(
+        formatNumeric(
             minutes,
-            fractionDigits,
-            0
+            fractionDigits
         ) + ' 分钟'
     );
 }
 
 function normalizeTimestampString(
     value: string,
-    naiveTimestampTimeZone: 'utc' | 'china'
+    naiveTimeZone: 'utc' | 'china'
 ): string {
-    const trimmed = value.trim();
+    const text = value.trim();
 
-    if (!trimmed) {
+    if (!text) {
         return '';
     }
 
-    if (/^\d{10}$/.test(trimmed)) {
-        return String(Number(trimmed) * 1000);
+    if (/^\d{10}$/.test(text)) {
+        return String(Number(text) * 1000);
     }
 
-    if (/^\d{13}$/.test(trimmed)) {
-        return trimmed;
+    if (/^\d{13}$/.test(text)) {
+        return text;
     }
 
-    if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) {
-        return trimmed.replace(' ', 'T');
+    if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+        return text.replace(' ', 'T');
     }
 
-    const matched = trimmed.match(
+    const matched = text.match(
         /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/
     );
 
     if (!matched) {
-        return trimmed;
+        return text;
     }
 
     const [
@@ -367,27 +379,27 @@ function normalizeTimestampString(
         hour,
         minute,
         second = '00',
-        milliseconds = '000'
+        millisecond = '000'
     ] = matched;
 
-    const normalizedMilliseconds =
-        milliseconds.padEnd(3, '0').slice(0, 3);
+    const normalizedMillisecond =
+        millisecond.padEnd(3, '0').slice(0, 3);
 
     const suffix =
-        naiveTimestampTimeZone === 'china'
+        naiveTimeZone === 'china'
             ? '+08:00'
             : 'Z';
 
     return (
         `${year}-${month}-${day}` +
         `T${hour}:${minute}:${second}.` +
-        `${normalizedMilliseconds}${suffix}`
+        `${normalizedMillisecond}${suffix}`
     );
 }
 
 function parseTimestamp(
     value: PlayerTimestamp,
-    naiveTimestampTimeZone: 'utc' | 'china'
+    naiveTimeZone: 'utc' | 'china'
 ): Date | null {
     if (
         value === null ||
@@ -420,7 +432,7 @@ function parseTimestamp(
 
     const normalized = normalizeTimestampString(
         String(value),
-        naiveTimestampTimeZone
+        naiveTimeZone
     );
 
     if (/^\d+$/.test(normalized)) {
@@ -440,11 +452,11 @@ function parseTimestamp(
 
 function getChinaTimeParts(
     value: PlayerTimestamp,
-    naiveTimestampTimeZone: 'utc' | 'china'
+    naiveTimeZone: 'utc' | 'china'
 ): Map<string, string> | null {
     const date = parseTimestamp(
         value,
-        naiveTimestampTimeZone
+        naiveTimeZone
     );
 
     if (!date) {
@@ -468,18 +480,21 @@ function getChinaTimeParts(
     return new Map(
         formatter
             .formatToParts(date)
-            .map((part) => [part.type, part.value])
+            .map((part) => [
+                part.type,
+                part.value
+            ])
     );
 }
 
 function formatChinaTime(
     value: PlayerTimestamp,
-    naiveTimestampTimeZone: 'utc' | 'china',
+    naiveTimeZone: 'utc' | 'china',
     fallback = '暂无'
 ): string {
     const parts = getChinaTimeParts(
         value,
-        naiveTimestampTimeZone
+        naiveTimeZone
     );
 
     if (!parts) {
@@ -498,11 +513,11 @@ function formatChinaTime(
 
 function formatChinaShortTime(
     value: PlayerTimestamp,
-    naiveTimestampTimeZone: 'utc' | 'china'
+    naiveTimeZone: 'utc' | 'china'
 ): string {
     const parts = getChinaTimeParts(
         value,
-        naiveTimestampTimeZone
+        naiveTimeZone
     );
 
     if (!parts) {
@@ -517,9 +532,9 @@ function formatChinaShortTime(
     );
 }
 
-function getOnlineStatus(
+function getOnlineTheme(
     isOnline: boolean | null | undefined
-): OnlineStatusTheme {
+): OnlineTheme {
     if (isOnline === true) {
         return {
             label: '当前在线',
@@ -527,7 +542,8 @@ function getOnlineStatus(
             background: '#E8F5E9',
             foreground: '#2E7D32',
             indicator: '#4CAF50',
-            symbol: '●'
+            symbol: '●',
+            explanation: '玩家当前已连接服务器'
         };
     }
 
@@ -538,7 +554,8 @@ function getOnlineStatus(
             background: '#FFEBEE',
             foreground: '#C62828',
             indicator: '#EF5350',
-            symbol: '●'
+            symbol: '●',
+            explanation: '玩家当前未连接服务器'
         };
     }
 
@@ -548,7 +565,8 @@ function getOnlineStatus(
         background: '#ECEFF1',
         foreground: '#546E7A',
         indicator: '#90A4AE',
-        symbol: '?'
+        symbol: '?',
+        explanation: '服务器未返回在线状态'
     };
 }
 
@@ -559,25 +577,28 @@ function estimateTextWidth(
     let width = 0;
 
     for (const character of Array.from(text)) {
-        width += /^[\u0000-\u00ff]$/.test(character)
-            ? fontSize * 0.58
+        const isAscii =
+            /^[\u0000-\u00ff]$/.test(character);
+
+        width += isAscii
+            ? fontSize * 0.6
             : fontSize;
     }
 
     return width;
 }
 
-function normalizeAddressList(
-    addressList:
+function normalizeAddresses(
+    values:
         | Array<string | null | undefined>
         | null
         | undefined
 ): string[] {
     return Array.from(
         new Set(
-            (addressList ?? [])
-                .map((item) =>
-                    String(item ?? '').trim()
+            (values ?? [])
+                .map((value) =>
+                    String(value ?? '').trim()
                 )
                 .filter(Boolean)
         )
@@ -599,20 +620,20 @@ function layoutAddressTags(
     const tagHeight = 28;
     const horizontalGap = 8;
     const verticalGap = 10;
-    const horizontalPadding = 14;
     const fontSize = 12;
+    const horizontalPadding = 14;
 
-    let currentX = options.x;
-    let currentY = options.y;
-    let currentRow = 1;
+    let x = options.x;
+    let y = options.y;
+    let row = 1;
 
-    for (const originalAddress of addresses) {
+    for (const rawAddress of addresses) {
         if (tags.length >= options.maxItems) {
             break;
         }
 
-        const address = truncateText(
-            originalAddress,
+        const text = truncateText(
+            rawAddress,
             16
         );
 
@@ -620,36 +641,34 @@ function layoutAddressTags(
             options.width,
             Math.max(
                 54,
-                estimateTextWidth(address, fontSize) +
+                estimateTextWidth(text, fontSize) +
                 horizontalPadding * 2
             )
         );
 
-        const rightBoundary =
-            options.x + options.width;
-
         if (
-            currentX + tagWidth > rightBoundary &&
-            currentX > options.x
+            x + tagWidth >
+            options.x + options.width &&
+            x > options.x
         ) {
-            currentRow += 1;
+            row += 1;
 
-            if (currentRow > options.maxRows) {
+            if (row > options.maxRows) {
                 break;
             }
 
-            currentX = options.x;
-            currentY += tagHeight + verticalGap;
+            x = options.x;
+            y += tagHeight + verticalGap;
         }
 
         tags.push({
-            text: address,
-            x: currentX,
-            y: currentY,
+            text,
+            x,
+            y,
             width: tagWidth
         });
 
-        currentX += tagWidth + horizontalGap;
+        x += tagWidth + horizontalGap;
     }
 
     return {
@@ -663,50 +682,12 @@ function layoutAddressTags(
     };
 }
 
-function sampleHistory<T>(
-    values: T[],
-    maximumPoints: number
-): T[] {
-    if (
-        maximumPoints <= 0 ||
-        values.length === 0
-    ) {
-        return [];
-    }
-
-    if (values.length <= maximumPoints) {
-        return [...values];
-    }
-
-    if (maximumPoints === 1) {
-        return [values[values.length - 1]];
-    }
-
-    const result: T[] = [];
-
-    for (
-        let index = 0;
-        index < maximumPoints;
-        index++
-    ) {
-        const sourceIndex = Math.round(
-            index *
-            (values.length - 1) /
-            (maximumPoints - 1)
-        );
-
-        result.push(values[sourceIndex]);
-    }
-
-    return result;
-}
-
 function normalizeMoneyHistory(
     history:
         | PlayerMoneyHistoryItem[]
         | null
         | undefined
-): NormalizedMoneyHistoryItem[] {
+): MoneyHistoryPoint[] {
     return (history ?? [])
         .map((item) => ({
             money:
@@ -717,6 +698,37 @@ function normalizeMoneyHistory(
         .filter((item) =>
             Number.isFinite(item.money)
         );
+}
+
+function sampleItems<T>(
+    items: T[],
+    maximumItems: number
+): T[] {
+    if (items.length <= maximumItems) {
+        return [...items];
+    }
+
+    if (maximumItems <= 1) {
+        return [items[items.length - 1]];
+    }
+
+    const result: T[] = [];
+
+    for (
+        let index = 0;
+        index < maximumItems;
+        index++
+    ) {
+        const sourceIndex = Math.round(
+            index *
+            (items.length - 1) /
+            (maximumItems - 1)
+        );
+
+        result.push(items[sourceIndex]);
+    }
+
+    return result;
 }
 
 function createAvatarDataUrl(
@@ -737,90 +749,122 @@ function createAvatarDataUrl(
     );
 }
 
-function buildCardLayout(
-    displayedMessageCount: number
-): CardLayout {
-    const identityTitleY = 184;
-    const identityCardY = 216;
-    const identityCardHeight = 150;
+function createLayout(
+    messageCount: number
+): Layout {
+    const identityTitleY = 194;
+    const identityCardY =
+        identityTitleY + TITLE_TO_CARD_GAP;
+    const identityCardHeight = 168;
 
     const addressTitleY =
-        identityCardY + identityCardHeight + 28;
-    const addressCardY = addressTitleY + 30;
+        identityCardY +
+        identityCardHeight +
+        SECTION_GAP;
+
+    const addressCardY =
+        addressTitleY + TITLE_TO_CARD_GAP;
+
     const addressCardHeight = 140;
 
-    const statisticsTitleY =
-        addressCardY + addressCardHeight + 28;
-    const moneyCardY = statisticsTitleY + 30;
+    const assetsTitleY =
+        addressCardY +
+        addressCardHeight +
+        SECTION_GAP;
+
+    const moneyCardY =
+        assetsTitleY + TITLE_TO_CARD_GAP;
+
     const moneyCardHeight = 110;
 
-    const statisticsCardsY =
-        moneyCardY + moneyCardHeight + 16;
-    const statisticsCardsHeight = 90;
+    const statisticCardsY =
+        moneyCardY +
+        moneyCardHeight +
+        16;
+
+    const statisticCardHeight = 92;
 
     const timeTitleY =
-        statisticsCardsY +
-        statisticsCardsHeight +
-        28;
-    const timeCardY = timeTitleY + 30;
-    const timeCardHeight = 134;
+        statisticCardsY +
+        statisticCardHeight +
+        SECTION_GAP;
+
+    const timeCardY =
+        timeTitleY + TITLE_TO_CARD_GAP;
+
+    const timeCardHeight = 144;
 
     const historyTitleY =
-        timeCardY + timeCardHeight + 28;
-    const historyCardY = historyTitleY + 30;
-    const historyCardHeight = 170;
+        timeCardY +
+        timeCardHeight +
+        SECTION_GAP;
+
+    const historyCardY =
+        historyTitleY + TITLE_TO_CARD_GAP;
+
+    const historyCardHeight = 176;
 
     const messagesTitleY =
-        historyCardY + historyCardHeight + 28;
-    const messagesCardY = messagesTitleY + 30;
+        historyCardY +
+        historyCardHeight +
+        SECTION_GAP;
 
-    const messageRows = Math.max(
-        1,
-        displayedMessageCount
-    );
+    const messagesCardY =
+        messagesTitleY + TITLE_TO_CARD_GAP;
+
+    const effectiveMessageCount =
+        Math.max(1, messageCount);
 
     const messagesCardHeight =
-        24 + messageRows * 46 + 16;
+        20 + effectiveMessageCount * 46 + 20;
 
     const footerY =
         messagesCardY +
         messagesCardHeight +
-        18;
+        22;
 
-    const height = footerY + 40;
-    const cardHeight = height - PAGE_MARGIN * 2;
+    const svgHeight = footerY + 42;
 
     return {
-        width: SVG_WIDTH,
-        height,
+        svgWidth: SVG_WIDTH,
+        svgHeight,
 
-        pageMargin: PAGE_MARGIN,
-        cardX: PAGE_MARGIN,
-        cardY: PAGE_MARGIN,
-        cardWidth: SVG_WIDTH - PAGE_MARGIN * 2,
-        cardHeight,
+        outerMargin: OUTER_MARGIN,
+
+        cardX: OUTER_MARGIN,
+        cardY: OUTER_MARGIN,
+        cardWidth: SVG_WIDTH - OUTER_MARGIN * 2,
+        cardHeight: svgHeight - OUTER_MARGIN * 2,
 
         contentX: CONTENT_X,
-        contentWidth: CONTENT_WIDTH,
         contentRight: CONTENT_RIGHT,
+        contentWidth: CONTENT_WIDTH,
+        contentCenterX:
+            CONTENT_X + CONTENT_WIDTH / 2,
 
-        headerY: 58,
+        headerDividerY: 170,
+
         identityTitleY,
         identityCardY,
+        identityCardHeight,
 
         addressTitleY,
         addressCardY,
         addressCardHeight,
 
-        statisticsTitleY,
+        assetsTitleY,
         moneyCardY,
-        statisticsCardsY,
+        moneyCardHeight,
+        statisticCardsY,
+        statisticCardHeight,
 
         timeTitleY,
         timeCardY,
+        timeCardHeight,
 
         historyTitleY,
         historyCardY,
+        historyCardHeight,
 
         messagesTitleY,
         messagesCardY,
@@ -830,7 +874,34 @@ function buildCardLayout(
     };
 }
 
-function renderAddressTagsSvg(
+function renderSectionTitle(
+    number: string,
+    title: string,
+    y: number,
+    summary?: string
+): string {
+    return `
+        <text
+            x="${CONTENT_X}"
+            y="${y}"
+            class="section-title"
+        >${escapeXml(number)}　${escapeXml(title)}</text>
+
+        ${
+        summary
+            ? `
+                    <text
+                        x="${CONTENT_RIGHT}"
+                        y="${y}"
+                        class="section-summary"
+                    >${escapeXml(summary)}</text>
+                `
+            : ''
+    }
+    `;
+}
+
+function renderAddressTags(
     layout: AddressLayout
 ): string {
     return layout.tags
@@ -847,43 +918,35 @@ function renderAddressTagsSvg(
             <text
                 x="${tag.x + tag.width / 2}"
                 y="${tag.y + 14}"
-                font-size="12"
-                font-weight="600"
-                fill="#0277BD"
-                text-anchor="middle"
-                dominant-baseline="central"
+                class="address-tag"
             >${escapeXml(tag.text)}</text>
         `)
         .join('');
 }
 
-function renderMoneyChartSvg(
-    history: NormalizedMoneyHistoryItem[],
-    cardY: number,
-    naiveTimestampTimeZone: 'utc' | 'china'
+function renderMoneyChart(
+    history: MoneyHistoryPoint[],
+    layout: Layout,
+    naiveTimeZone: 'utc' | 'china'
 ): string {
-    const centerX =
-        CONTENT_X + CONTENT_WIDTH / 2;
-
     if (history.length === 0) {
         return `
             <text
-                x="${centerX}"
-                y="${cardY + 85}"
-                font-size="14"
-                font-weight="500"
-                fill="#90A4AE"
-                text-anchor="middle"
-                dominant-baseline="central"
+                x="${layout.contentCenterX}"
+                y="${
+            layout.historyCardY +
+            layout.historyCardHeight / 2
+        }"
+                class="empty-text"
             >暂无金币历史数据</text>
         `;
     }
 
-    const chartLeft = CONTENT_X + 36;
-    const chartRight = CONTENT_RIGHT - 36;
-    const chartTop = cardY + 24;
-    const chartBottom = cardY + 112;
-    const timeLabelY = cardY + 145;
+    const left = layout.contentX + 36;
+    const right = layout.contentRight - 36;
+    const top = layout.historyCardY + 26;
+    const bottom = layout.historyCardY + 118;
+    const timeY = layout.historyCardY + 151;
 
     const values = history.map(
         (item) => item.money
@@ -897,16 +960,16 @@ function renderMoneyChartSvg(
         (item, index) => {
             const x =
                 history.length === 1
-                    ? (chartLeft + chartRight) / 2
-                    : chartLeft +
+                    ? (left + right) / 2
+                    : left +
                     index *
-                    (chartRight - chartLeft) /
+                    (right - left) /
                     (history.length - 1);
 
             const y =
-                chartBottom -
+                bottom -
                 ((item.money - minimum) / range) *
-                (chartBottom - chartTop);
+                (bottom - top);
 
             return {
                 ...item,
@@ -916,21 +979,21 @@ function renderMoneyChartSvg(
         }
     );
 
-    const polylinePoints = points
+    const polyline = points
         .map((point) =>
             `${point.x},${point.y}`
         )
         .join(' ');
 
-    const pointSvg = points
+    const pointElements = points
         .map((point, index) => {
             const isLast =
                 index === points.length - 1;
 
-            const amountY =
-                point.y <= chartTop + 16
-                    ? point.y + 17
-                    : point.y - 11;
+            const valueY =
+                point.y < top + 20
+                    ? point.y + 18
+                    : point.y - 13;
 
             return `
                 <circle
@@ -948,7 +1011,7 @@ function renderMoneyChartSvg(
 
                 <text
                     x="${point.x}"
-                    y="${amountY}"
+                    y="${valueY}"
                     font-size="9"
                     font-weight="${
                 isLast ? 700 : 500
@@ -956,28 +1019,25 @@ function renderMoneyChartSvg(
                     fill="${
                 isLast
                     ? '#0277BD'
-                    : '#546E7A'
+                    : '#607D8B'
             }"
                     text-anchor="middle"
-                    dominant-baseline="central"
+                    dominant-baseline="middle"
                 >${escapeXml(
-                formatNumber(
-                    point.money,
-                    2
-                )
+                formatNumber(point.money, 2)
             )}</text>
 
                 <text
                     x="${point.x}"
-                    y="${timeLabelY}"
+                    y="${timeY}"
                     font-size="9"
                     fill="#78909C"
                     text-anchor="middle"
-                    dominant-baseline="central"
+                    dominant-baseline="middle"
                 >${escapeXml(
                 formatChinaShortTime(
                     point.timestamp,
-                    naiveTimestampTimeZone
+                    naiveTimeZone
                 )
             )}</text>
             `;
@@ -986,30 +1046,26 @@ function renderMoneyChartSvg(
 
     return `
         <line
-            x1="${chartLeft}"
-            y1="${chartTop}"
-            x2="${chartRight}"
-            y2="${chartTop}"
+            x1="${left}"
+            y1="${top}"
+            x2="${right}"
+            y2="${top}"
             stroke="#E3EBEF"
         />
 
         <line
-            x1="${chartLeft}"
-            y1="${
-        (chartTop + chartBottom) / 2
-    }"
-            x2="${chartRight}"
-            y2="${
-        (chartTop + chartBottom) / 2
-    }"
+            x1="${left}"
+            y1="${(top + bottom) / 2}"
+            x2="${right}"
+            y2="${(top + bottom) / 2}"
             stroke="#E3EBEF"
         />
 
         <line
-            x1="${chartLeft}"
-            y1="${chartBottom}"
-            x2="${chartRight}"
-            y2="${chartBottom}"
+            x1="${left}"
+            y1="${bottom}"
+            x2="${right}"
+            y2="${bottom}"
             stroke="#E3EBEF"
         />
 
@@ -1017,7 +1073,7 @@ function renderMoneyChartSvg(
         points.length > 1
             ? `
                     <polyline
-                        points="${polylinePoints}"
+                        points="${polyline}"
                         fill="none"
                         stroke="#03A9F4"
                         stroke-width="3"
@@ -1028,49 +1084,39 @@ function renderMoneyChartSvg(
             : ''
     }
 
-        ${pointSvg}
+        ${pointElements}
     `;
 }
 
-function renderRecentMessagesSvg(
+function renderMessages(
     messages: PlayerRecentMessage[],
-    cardY: number,
-    contentCenterX: number,
-    naiveTimestampTimeZone: 'utc' | 'china'
+    layout: Layout,
+    naiveTimeZone: 'utc' | 'china'
 ): string {
     if (messages.length === 0) {
         return `
             <text
-                x="${contentCenterX}"
-                y="${cardY + 43}"
-                font-size="14"
-                fill="#90A4AE"
-                text-anchor="middle"
-                dominant-baseline="central"
+                x="${layout.contentCenterX}"
+                y="${
+            layout.messagesCardY +
+            layout.messagesCardHeight / 2
+        }"
+                class="empty-text"
             >暂无最近消息</text>
         `;
     }
 
-    const innerX = CONTENT_X + 20;
-    const innerRight = CONTENT_RIGHT - 20;
-    const areaWidth = 100;
-    const rowHeight = 46;
+    const innerX = layout.contentX + 20;
+    const innerRight = layout.contentRight - 20;
 
     return messages
         .map((message, index) => {
             const rowTop =
-                cardY + 16 + index * rowHeight;
+                layout.messagesCardY +
+                20 +
+                index * 46;
+
             const rowCenter = rowTop + 15;
-
-            const area = truncateText(
-                message.area || '未知区域',
-                9
-            );
-
-            const content = truncateText(
-                message.content,
-                32
-            );
 
             return `
                 ${
@@ -1078,9 +1124,9 @@ function renderRecentMessagesSvg(
                     ? `
                             <line
                                 x1="${innerX}"
-                                y1="${rowTop - 7}"
+                                y1="${rowTop - 8}"
                                 x2="${innerRight}"
-                                y2="${rowTop - 7}"
+                                y2="${rowTop - 8}"
                                 stroke="#E3EBEF"
                             />
                         `
@@ -1090,30 +1136,41 @@ function renderRecentMessagesSvg(
                 <rect
                     x="${innerX}"
                     y="${rowTop}"
-                    width="${areaWidth}"
+                    width="100"
                     height="30"
                     rx="4"
                     fill="#E1F5FE"
                 />
 
                 <text
-                    x="${innerX + areaWidth / 2}"
+                    x="${innerX + 50}"
                     y="${rowCenter}"
                     font-size="10"
                     font-weight="600"
                     fill="#0277BD"
                     text-anchor="middle"
-                    dominant-baseline="central"
-                >${escapeXml(area)}</text>
+                    dominant-baseline="middle"
+                >${escapeXml(
+                truncateText(
+                    message.area,
+                    9,
+                    '未知区域'
+                )
+            )}</text>
 
                 <text
-                    x="${innerX + areaWidth + 16}"
+                    x="${innerX + 116}"
                     y="${rowCenter}"
                     font-size="12"
                     font-weight="500"
                     fill="#37474F"
-                    dominant-baseline="central"
-                >${escapeXml(content)}</text>
+                    dominant-baseline="middle"
+                >${escapeXml(
+                truncateText(
+                    message.content,
+                    34
+                )
+            )}</text>
 
                 <text
                     x="${innerRight}"
@@ -1121,11 +1178,11 @@ function renderRecentMessagesSvg(
                     font-size="10"
                     fill="#78909C"
                     text-anchor="end"
-                    dominant-baseline="central"
+                    dominant-baseline="middle"
                 >${escapeXml(
                 formatChinaTime(
                     message.create_time,
-                    naiveTimestampTimeZone,
+                    naiveTimeZone,
                     '时间未知'
                 )
             )}</text>
@@ -1170,27 +1227,27 @@ export function createPlayerCardSvg(
             6
         );
 
-    const naiveTimestampTimeZone =
+    const naiveTimeZone =
         options.naiveTimestampTimeZone ?? 'utc';
 
-    const completeMessages =
+    const allMessages =
         data.recent_messages ?? [];
 
     const displayedMessages =
-        completeMessages.slice(
+        allMessages.slice(
             0,
             maxRecentMessages
         );
 
-    const layout = buildCardLayout(
+    const layout = createLayout(
         displayedMessages.length
     );
 
-    const onlineStatus = getOnlineStatus(
+    const onlineTheme = getOnlineTheme(
         data.is_online
     );
 
-    const addresses = normalizeAddressList(
+    const addresses = normalizeAddresses(
         data.address_list
     );
 
@@ -1198,62 +1255,57 @@ export function createPlayerCardSvg(
         addresses,
         {
             x: layout.contentX + 22,
-            y: layout.addressCardY + 16,
+            y: layout.addressCardY + 18,
             width: layout.contentWidth - 44,
             maxItems: maxAddressItems,
             maxRows: maxAddressRows
         }
     );
 
-    const completeMoneyHistory =
+    const completeHistory =
         normalizeMoneyHistory(
             data.money_history
         );
 
-    const sampledMoneyHistory =
-        sampleHistory(
-            completeMoneyHistory,
-            maxMoneyHistoryPoints
-        );
-
-    const omittedHistoryCount = Math.max(
-        0,
-        completeMoneyHistory.length -
-        sampledMoneyHistory.length
+    const displayedHistory = sampleItems(
+        completeHistory,
+        maxMoneyHistoryPoints
     );
 
-    const omittedMessageCount = Math.max(
-        0,
-        completeMessages.length -
-        displayedMessages.length
+    const historyOmitted =
+        completeHistory.length -
+        displayedHistory.length;
+
+    const messageOmitted =
+        allMessages.length -
+        displayedMessages.length;
+
+    const username = truncateText(
+        data.username,
+        24
+    );
+
+    const role = truncateText(
+        data.role,
+        18,
+        '普通玩家'
     );
 
     const avatarDataUrl =
         createAvatarDataUrl(
             data.avatar,
-            data.avatarMimeType ??
-            'image/png'
+            data.avatarMimeType ?? 'image/png'
         );
 
-    const username = truncateText(
-        data.username,
-        26
-    );
-
-    const role = truncateText(
-        data.role || '普通玩家',
-        18
-    );
-
     const moneySource =
-        data.money_source === 'history'
-            ? '历史快照'
-            : data.money_source === 'realtime'
-                ? '实时查询'
+        data.money_source === 'realtime'
+            ? '实时查询'
+            : data.money_source === 'history'
+                ? '历史快照'
                 : truncateText(
-                    data.money_source ||
-                    '未知来源',
-                    20
+                    data.money_source,
+                    16,
+                    '未知来源'
                 );
 
     const moneyTime =
@@ -1262,101 +1314,92 @@ export function createPlayerCardSvg(
             ? '实时数据，无快照时间'
             : formatChinaTime(
                 data.money_time,
-                naiveTimestampTimeZone
+                naiveTimeZone
             );
 
-    const realPoint = formatRealPoint(
-        data.point
-    );
-
-    const onlineMinutes =
-        formatOnlineMinutes(
-            data.online_time,
-            onlineMinutesFractionDigits
-        );
-
     const addressSummary =
-        addressLayout.total === 0
+        addresses.length === 0
             ? '暂无地区记录'
             : addressLayout.omitted > 0
                 ? (
-                    `共 ${addressLayout.total} 个 · ` +
+                    `共 ${addresses.length} 个 · ` +
                     `展示 ${addressLayout.displayed} 个 · ` +
                     `省略 ${addressLayout.omitted} 个`
                 )
-                : (
-                    `共 ${addressLayout.total} 个 · ` +
-                    '全部展示'
-                );
+                : `共 ${addresses.length} 个 · 全部展示`;
 
     const historySummary =
-        completeMoneyHistory.length === 0
+        completeHistory.length === 0
             ? '暂无记录'
-            : omittedHistoryCount > 0
+            : historyOmitted > 0
                 ? (
-                    `共 ${completeMoneyHistory.length} 条 · ` +
-                    `展示 ${sampledMoneyHistory.length} 条 · ` +
-                    `省略 ${omittedHistoryCount} 条`
+                    `共 ${completeHistory.length} 条 · ` +
+                    `展示 ${displayedHistory.length} 条 · ` +
+                    `省略 ${historyOmitted} 条`
                 )
                 : (
-                    `共 ${completeMoneyHistory.length} 条 · ` +
+                    `共 ${completeHistory.length} 条 · ` +
                     '全部展示'
                 );
 
     const messageSummary =
-        completeMessages.length === 0
+        allMessages.length === 0
             ? '暂无消息'
-            : omittedMessageCount > 0
+            : messageOmitted > 0
                 ? (
-                    `共 ${completeMessages.length} 条 · ` +
+                    `共 ${allMessages.length} 条 · ` +
                     `展示 ${displayedMessages.length} 条 · ` +
-                    `省略 ${omittedMessageCount} 条`
+                    `省略 ${messageOmitted} 条`
                 )
                 : `最近 ${displayedMessages.length} 条`;
 
-    const avatarX = layout.contentX + 24;
-    const avatarY = layout.identityCardY + 16;
-    const avatarSize = 118;
+    /*
+     * 玩家身份卡布局
+     *
+     * 卡片高度：168
+     * 内边距：24
+     * 可用高度：120
+     * 两个信息行中心：第 1 行 52，第 2 行 116
+     *
+     * 每行：
+     * 标签中心在行中心 - 14
+     * 内容中心在行中心 + 14
+     */
+    const identityInnerPadding = 24;
 
-    const leftInfoX = avatarX + avatarSize + 26;
-    const rightInfoX =
+    const avatarSize = 120;
+    const avatarX =
+        layout.contentX + identityInnerPadding;
+
+    const avatarY =
+        layout.identityCardY +
+        (layout.identityCardHeight - avatarSize) / 2;
+
+    const leftColumnX =
+        avatarX + avatarSize + 28;
+
+    const rightColumnX =
         layout.contentX +
         layout.contentWidth / 2 +
         54;
 
-    const statisticGap = 18;
-    const statisticWidth =
-        (layout.contentWidth -
-            statisticGap * 2) /
-        3;
+    const identityRow1Center =
+        layout.identityCardY + 52;
 
-    const statisticCenters = [
-        layout.contentX +
-        statisticWidth / 2,
-        layout.contentX +
-        statisticWidth +
-        statisticGap +
-        statisticWidth / 2,
-        layout.contentX +
-        (statisticWidth + statisticGap) *
-        2 +
-        statisticWidth / 2
-    ];
+    const identityRow2Center =
+        layout.identityCardY + 116;
 
-    const timeColumnGap = 36;
-    const timeColumnWidth =
-        (layout.contentWidth -
-            48 -
-            timeColumnGap) /
-        2;
+    const labelOffset = -15;
+    const valueOffset = 15;
 
-    const timeLeftX =
-        layout.contentX + 24;
+    const statusWidth = 150;
+    const statusHeight = 34;
 
-    const timeRightX =
-        timeLeftX +
-        timeColumnWidth +
-        timeColumnGap;
+    const statusX = rightColumnX;
+    const statusY =
+        identityRow1Center +
+        valueOffset -
+        statusHeight / 2;
 
     const avatarSvg = avatarDataUrl
         ? `
@@ -1367,7 +1410,7 @@ export function createPlayerCardSvg(
                         y="${avatarY}"
                         width="${avatarSize}"
                         height="${avatarSize}"
-                        rx="8"
+                        rx="10"
                     />
                 </clipPath>
             </defs>
@@ -1381,6 +1424,16 @@ export function createPlayerCardSvg(
                 preserveAspectRatio="xMidYMid slice"
                 clip-path="url(#avatarClip)"
             />
+
+            <rect
+                x="${avatarX}"
+                y="${avatarY}"
+                width="${avatarSize}"
+                height="${avatarSize}"
+                rx="10"
+                fill="none"
+                stroke="#D8E4E9"
+            />
         `
         : `
             <rect
@@ -1388,60 +1441,109 @@ export function createPlayerCardSvg(
                 y="${avatarY}"
                 width="${avatarSize}"
                 height="${avatarSize}"
-                rx="8"
+                rx="10"
                 fill="#E1F5FE"
+                stroke="#D8E4E9"
             />
 
             <text
                 x="${avatarX + avatarSize / 2}"
                 y="${avatarY + avatarSize / 2}"
-                font-size="45"
+                font-size="44"
                 font-weight="700"
                 fill="#039BE5"
                 text-anchor="middle"
-                dominant-baseline="central"
+                dominant-baseline="middle"
             >${escapeXml(
             Array.from(username)[0]
-                ?.toUpperCase() || '?'
+                ?.toUpperCase() ?? '?'
         )}</text>
         `;
 
-    const addressTagsSvg =
-        addressLayout.total === 0
+    const addressContent =
+        addresses.length === 0
             ? `
                 <text
-                    x="${
-                layout.contentX +
-                layout.contentWidth / 2
-            }"
+                    x="${layout.contentCenterX}"
                     y="${
                 layout.addressCardY +
                 layout.addressCardHeight / 2
             }"
-                    font-size="13"
-                    fill="#90A4AE"
-                    text-anchor="middle"
-                    dominant-baseline="central"
+                    class="empty-text"
                 >暂无地区记录</text>
             `
-            : renderAddressTagsSvg(
-                addressLayout
-            );
+            : renderAddressTags(addressLayout);
 
-    const statusExplanation =
-        data.is_online === null ||
-        data.is_online === undefined
-            ? '服务器未返回在线状态'
-            : data.is_online
-                ? '玩家当前已连接服务器'
-                : '玩家当前未连接服务器';
+    const statisticGap = 18;
+
+    const statisticWidth =
+        (
+            layout.contentWidth -
+            statisticGap * 2
+        ) / 3;
+
+    const statisticX1 = layout.contentX;
+
+    const statisticX2 =
+        statisticX1 +
+        statisticWidth +
+        statisticGap;
+
+    const statisticX3 =
+        statisticX2 +
+        statisticWidth +
+        statisticGap;
+
+    const statisticCenter1 =
+        statisticX1 + statisticWidth / 2;
+
+    const statisticCenter2 =
+        statisticX2 + statisticWidth / 2;
+
+    const statisticCenter3 =
+        statisticX3 + statisticWidth / 2;
+
+    const statisticLabelY =
+        layout.statisticCardsY + 29;
+
+    const statisticValueY =
+        layout.statisticCardsY + 64;
+
+    const timeInnerX = layout.contentX + 24;
+    const timeInnerRight =
+        layout.contentRight - 24;
+
+    const timeColumnGap = 40;
+
+    const timeColumnWidth =
+        (
+            timeInnerRight -
+            timeInnerX -
+            timeColumnGap
+        ) / 2;
+
+    const timeColumn1X = timeInnerX;
+
+    const timeColumn2X =
+        timeInnerX +
+        timeColumnWidth +
+        timeColumnGap;
+
+    const timeRow1Center =
+        layout.timeCardY + 39;
+
+    const timeRow2Center =
+        layout.timeCardY + 105;
+
+    const timeLabelOffset = -12;
+    const timeValueOffset = 13;
 
     return `
 <svg
     xmlns="http://www.w3.org/2000/svg"
-    width="${layout.width}"
-    height="${layout.height}"
-    viewBox="0 0 ${layout.width} ${layout.height}"
+    width="${layout.svgWidth}"
+    height="${layout.svgHeight}"
+    viewBox="0 0 ${layout.svgWidth} ${layout.svgHeight}"
 >
     <style>
         text {
@@ -1451,14 +1553,52 @@ export function createPlayerCardSvg(
                 "Microsoft YaHei",
                 sans-serif;
         }
+        .section-title {
+            font-size: 14px;
+            font-weight: 700;
+            fill: #0288D1;
+            dominant-baseline: middle;
+        }
+        .section-summary {
+            font-size: 11px;
+            fill: #78909C;
+            text-anchor: end;
+            dominant-baseline: middle;
+        }
+        .field-label {
+            font-size: 11px;
+            font-weight: 400;
+            fill: #78909C;
+            dominant-baseline: middle;
+        }
+        .field-value {
+            font-size: 14px;
+            font-weight: 700;
+            fill: #37474F;
+            dominant-baseline: middle;
+        }
+        .address-tag {
+            font-size: 12px;
+            font-weight: 600;
+            fill: #0277BD;
+            text-anchor: middle;
+            dominant-baseline: middle;
+        }
+        .empty-text {
+            font-size: 14px;
+            font-weight: 500;
+            fill: #90A4AE;
+            text-anchor: middle;
+            dominant-baseline: middle;
+        }
     </style>
-    <!-- 页面背景 -->
+    <!-- 背景 -->
     <rect
-        width="${layout.width}"
-        height="${layout.height}"
+        width="${layout.svgWidth}"
+        height="${layout.svgHeight}"
         fill="#F3F7F9"
     />
-    <!-- 主容器：上下左右均为 24px -->
+    <!-- 主容器 -->
     <rect
         x="${layout.cardX}"
         y="${layout.cardY}"
@@ -1468,6 +1608,7 @@ export function createPlayerCardSvg(
         fill="#FFFFFF"
         stroke="#D8E4E9"
     />
+    <!-- 顶部蓝色装饰线 -->
     <rect
         x="${layout.cardX}"
         y="${layout.cardY}"
@@ -1476,31 +1617,32 @@ export function createPlayerCardSvg(
         rx="3.5"
         fill="#03A9F4"
     />
-    <!-- 顶部信息 -->
+    <!-- 页头 -->
     <text
         x="${layout.contentX}"
-        y="62"
+        y="68"
         font-size="12"
         font-weight="700"
         letter-spacing="1.5"
         fill="#0288D1"
-        dominant-baseline="text-before-edge"
+        dominant-baseline="middle"
     >PLAYER INFORMATION</text>
     <text
         x="${layout.contentX}"
-        y="91"
+        y="105"
         font-size="28"
         font-weight="700"
         fill="#263238"
-        dominant-baseline="text-before-edge"
+        dominant-baseline="middle"
     >玩家数据档案</text>
     <text
         x="${layout.contentX}"
-        y="132"
+        y="139"
         font-size="12"
         fill="#78909C"
-        dominant-baseline="text-before-edge"
+        dominant-baseline="middle"
     >所有时间均按中国标准时间显示 · Asia/Shanghai · UTC+8</text>
+    <!-- 数据来源 -->
     <rect
         x="${layout.contentRight - 162}"
         y="58"
@@ -1516,21 +1658,22 @@ export function createPlayerCardSvg(
         font-weight="700"
         fill="#0277BD"
         text-anchor="middle"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >${escapeXml(moneySource)}</text>
+    <!-- 顶部在线状态 -->
     <rect
         x="${layout.contentRight - 162}"
         y="104"
         width="162"
         height="36"
         rx="5"
-        fill="${onlineStatus.background}"
+        fill="${onlineTheme.background}"
     />
     <circle
         cx="${layout.contentRight - 141}"
         cy="122"
         r="8"
-        fill="${onlineStatus.indicator}"
+        fill="${onlineTheme.indicator}"
     />
     <text
         x="${layout.contentRight - 141}"
@@ -1539,147 +1682,147 @@ export function createPlayerCardSvg(
         font-weight="700"
         fill="#FFFFFF"
         text-anchor="middle"
-        dominant-baseline="central"
-    >${escapeXml(onlineStatus.symbol)}</text>
+        dominant-baseline="middle"
+    >${escapeXml(onlineTheme.symbol)}</text>
     <text
         x="${layout.contentRight - 91}"
         y="122"
         font-size="12"
         font-weight="700"
-        fill="${onlineStatus.foreground}"
+        fill="${onlineTheme.foreground}"
         text-anchor="middle"
-        dominant-baseline="central"
-    >${escapeXml(onlineStatus.label)}</text>
+        dominant-baseline="middle"
+    >${escapeXml(onlineTheme.label)}</text>
     <text
         x="${layout.contentRight - 14}"
         y="122"
         font-size="9"
         font-weight="600"
-        fill="${onlineStatus.foreground}"
+        fill="${onlineTheme.foreground}"
         text-anchor="end"
-        dominant-baseline="central"
-    >${onlineStatus.rawValue}</text>
+        dominant-baseline="middle"
+    >${onlineTheme.rawValue}</text>
     <line
         x1="${layout.contentX}"
-        y1="166"
+        y1="${layout.headerDividerY}"
         x2="${layout.contentRight}"
-        y2="166"
+        y2="${layout.headerDividerY}"
         stroke="#E3EBEF"
     />
     <!-- 01 玩家身份 -->
-    <text
-        x="${layout.contentX}"
-        y="${layout.identityTitleY}"
-        font-size="14"
-        font-weight="700"
-        fill="#0288D1"
-        dominant-baseline="text-before-edge"
-    >01　玩家身份</text>
+    ${renderSectionTitle(
+        '01',
+        '玩家身份',
+        layout.identityTitleY
+    )}
     <rect
         x="${layout.contentX}"
         y="${layout.identityCardY}"
         width="${layout.contentWidth}"
-        height="150"
+        height="${layout.identityCardHeight}"
         rx="7"
         fill="#FAFCFD"
         stroke="#DCE8ED"
     />
     ${avatarSvg}
+    <!-- 第一行左侧：用户名 -->
     <text
-        x="${leftInfoX}"
-        y="${layout.identityCardY + 22}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="text-before-edge"
+        x="${leftColumnX}"
+        y="${
+        identityRow1Center +
+        labelOffset
+    }"
+        class="field-label"
     >玩家名称 · USERNAME</text>
     <text
-        x="${leftInfoX}"
-        y="${layout.identityCardY + 50}"
-        font-size="25"
+        x="${leftColumnX}"
+        y="${
+        identityRow1Center +
+        valueOffset
+    }"
+        font-size="24"
         font-weight="700"
         fill="#263238"
-        dominant-baseline="text-before-edge"
+        dominant-baseline="middle"
     >${escapeXml(username)}</text>
+    <!-- 第一行右侧：在线状态 -->
     <text
-        x="${leftInfoX}"
-        y="${layout.identityCardY + 100}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="text-before-edge"
-    >玩家角色 · ROLE</text>
-    <text
-        x="${leftInfoX}"
-        y="${layout.identityCardY + 124}"
-        font-size="14"
-        font-weight="700"
-        fill="#37474F"
-        dominant-baseline="text-before-edge"
-    >${escapeXml(role)}</text>
-    <text
-        x="${rightInfoX}"
-        y="${layout.identityCardY + 22}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="text-before-edge"
+        x="${rightColumnX}"
+        y="${
+        identityRow1Center +
+        labelOffset
+    }"
+        class="field-label"
     >在线字段 · IS_ONLINE</text>
     <rect
-        x="${rightInfoX}"
-        y="${layout.identityCardY + 47}"
-        width="150"
-        height="34"
+        x="${statusX}"
+        y="${statusY}"
+        width="${statusWidth}"
+        height="${statusHeight}"
         rx="5"
-        fill="${onlineStatus.background}"
+        fill="${onlineTheme.background}"
     />
     <text
-        x="${rightInfoX + 54}"
-        y="${layout.identityCardY + 64}"
+        x="${statusX + 56}"
+        y="${statusY + statusHeight / 2}"
         font-size="12"
         font-weight="700"
-        fill="${onlineStatus.foreground}"
+        fill="${onlineTheme.foreground}"
         text-anchor="middle"
-        dominant-baseline="central"
-    >${escapeXml(onlineStatus.label)}</text>
+        dominant-baseline="middle"
+    >${escapeXml(onlineTheme.label)}</text>
     <text
-        x="${rightInfoX + 136}"
-        y="${layout.identityCardY + 64}"
+        x="${statusX + statusWidth - 14}"
+        y="${statusY + statusHeight / 2}"
         font-size="10"
-        font-weight="600"
-        fill="${onlineStatus.foreground}"
+        font-weight="700"
+        fill="${onlineTheme.foreground}"
         text-anchor="end"
-        dominant-baseline="central"
-    >${onlineStatus.rawValue}</text>
+        dominant-baseline="middle"
+    >${onlineTheme.rawValue}</text>
+    <!-- 第二行左侧：角色 -->
     <text
-        x="${rightInfoX}"
-        y="${layout.identityCardY + 100}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="text-before-edge"
+        x="${leftColumnX}"
+        y="${
+        identityRow2Center +
+        labelOffset
+    }"
+        class="field-label"
+    >玩家角色 · ROLE</text>
+    <text
+        x="${leftColumnX}"
+        y="${
+        identityRow2Center +
+        valueOffset
+    }"
+        class="field-value"
+    >${escapeXml(role)}</text>
+    <!-- 第二行右侧：状态解释 -->
+    <text
+        x="${rightColumnX}"
+        y="${
+        identityRow2Center +
+        labelOffset
+    }"
+        class="field-label"
     >状态解释</text>
     <text
-        x="${rightInfoX}"
-        y="${layout.identityCardY + 124}"
-        font-size="13"
-        font-weight="600"
-        fill="#455A64"
-        dominant-baseline="text-before-edge"
-    >${escapeXml(statusExplanation)}</text>
+        x="${rightColumnX}"
+        y="${
+        identityRow2Center +
+        valueOffset
+    }"
+        class="field-value"
+    >${escapeXml(
+        onlineTheme.explanation
+    )}</text>
     <!-- 02 活跃地区 -->
-    <text
-        x="${layout.contentX}"
-        y="${layout.addressTitleY}"
-        font-size="14"
-        font-weight="700"
-        fill="#0288D1"
-        dominant-baseline="text-before-edge"
-    >02　活跃地区</text>
-    <text
-        x="${layout.contentRight}"
-        y="${layout.addressTitleY + 1}"
-        font-size="11"
-        fill="#78909C"
-        text-anchor="end"
-        dominant-baseline="text-before-edge"
-    >${escapeXml(addressSummary)}</text>
+    ${renderSectionTitle(
+        '02',
+        '活跃地区',
+        layout.addressTitleY,
+        addressSummary
+    )}
     <rect
         x="${layout.contentX}"
         y="${layout.addressCardY}"
@@ -1689,7 +1832,7 @@ export function createPlayerCardSvg(
         fill="#FAFCFD"
         stroke="#DCE8ED"
     />
-    ${addressTagsSvg}
+    ${addressContent}
     ${
         addressLayout.omitted > 0
             ? `
@@ -1698,49 +1841,46 @@ export function createPlayerCardSvg(
                     y="${
                 layout.addressCardY +
                 layout.addressCardHeight -
-                17
+                18
             }"
                     font-size="11"
                     font-weight="600"
                     fill="#78909C"
                     text-anchor="end"
-                    dominant-baseline="central"
+                    dominant-baseline="middle"
                 >+${addressLayout.omitted} 个地区未展示</text>
             `
             : ''
     }
     <!-- 03 资产与统计 -->
-    <text
-        x="${layout.contentX}"
-        y="${layout.statisticsTitleY}"
-        font-size="14"
-        font-weight="700"
-        fill="#0288D1"
-        dominant-baseline="text-before-edge"
-    >03　资产与统计</text>
+    ${renderSectionTitle(
+        '03',
+        '资产与统计',
+        layout.assetsTitleY
+    )}
     <rect
         x="${layout.contentX}"
         y="${layout.moneyCardY}"
         width="${layout.contentWidth}"
-        height="110"
+        height="${layout.moneyCardHeight}"
         rx="7"
         fill="#E1F5FE"
     />
     <text
         x="${layout.contentX + 24}"
-        y="${layout.moneyCardY + 29}"
+        y="${layout.moneyCardY + 30}"
         font-size="11"
         font-weight="600"
         fill="#0277BD"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >当前金币 · CURRENT BALANCE</text>
     <text
         x="${layout.contentX + 24}"
-        y="${layout.moneyCardY + 72}"
+        y="${layout.moneyCardY + 73}"
         font-size="35"
         font-weight="700"
         fill="#01579B"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >${escapeXml(
         formatNumber(data.money, 2)
     )}</text>
@@ -1750,7 +1890,7 @@ export function createPlayerCardSvg(
         font-size="11"
         fill="#78909C"
         text-anchor="end"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >金币来源</text>
     <text
         x="${layout.contentRight - 24}"
@@ -1759,7 +1899,7 @@ export function createPlayerCardSvg(
         font-weight="700"
         fill="#0277BD"
         text-anchor="end"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >${escapeXml(moneySource)}</text>
     <text
         x="${layout.contentRight - 24}"
@@ -1767,257 +1907,233 @@ export function createPlayerCardSvg(
         font-size="10"
         fill="#78909C"
         text-anchor="end"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >${escapeXml(moneyTime)}</text>
-    <!-- 三个等宽、等边距统计卡片 -->
+    <!-- 积分 -->
     <rect
-        x="${layout.contentX}"
-        y="${layout.statisticsCardsY}"
+        x="${statisticX1}"
+        y="${layout.statisticCardsY}"
         width="${statisticWidth}"
-        height="90"
+        height="${layout.statisticCardHeight}"
         rx="7"
         fill="#FFFFFF"
         stroke="#DCE8ED"
     />
     <text
-        x="${statisticCenters[0]}"
-        y="${layout.statisticsCardsY + 28}"
+        x="${statisticCenter1}"
+        y="${statisticLabelY}"
         font-size="11"
         fill="#78909C"
         text-anchor="middle"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >玩家积分 · POINT</text>
     <text
-        x="${statisticCenters[0]}"
-        y="${layout.statisticsCardsY + 61}"
+        x="${statisticCenter1}"
+        y="${statisticValueY}"
         font-size="24"
         font-weight="700"
         fill="#263238"
         text-anchor="middle"
-        dominant-baseline="central"
-    >${escapeXml(realPoint)}</text>
+        dominant-baseline="middle"
+    >${escapeXml(
+        formatRealPoint(data.point)
+    )}</text>
+    <!-- 消息数量 -->
     <rect
-        x="${
-        layout.contentX +
-        statisticWidth +
-        statisticGap
-    }"
-        y="${layout.statisticsCardsY}"
+        x="${statisticX2}"
+        y="${layout.statisticCardsY}"
         width="${statisticWidth}"
-        height="90"
+        height="${layout.statisticCardHeight}"
         rx="7"
         fill="#FFFFFF"
         stroke="#DCE8ED"
     />
     <text
-        x="${statisticCenters[1]}"
-        y="${layout.statisticsCardsY + 28}"
+        x="${statisticCenter2}"
+        y="${statisticLabelY}"
         font-size="11"
         fill="#78909C"
         text-anchor="middle"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >累计消息 · MESSAGE COUNT</text>
     <text
-        x="${statisticCenters[1]}"
-        y="${layout.statisticsCardsY + 61}"
+        x="${statisticCenter2}"
+        y="${statisticValueY}"
         font-size="24"
         font-weight="700"
         fill="#263238"
         text-anchor="middle"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >${escapeXml(
         formatNumber(
             data.message_count,
             0
         )
     )}</text>
+    <!-- 在线时间 -->
     <rect
-        x="${
-        layout.contentX +
-        (statisticWidth +
-            statisticGap) *
-        2
-    }"
-        y="${layout.statisticsCardsY}"
+        x="${statisticX3}"
+        y="${layout.statisticCardsY}"
         width="${statisticWidth}"
-        height="90"
+        height="${layout.statisticCardHeight}"
         rx="7"
         fill="#FFFFFF"
         stroke="#DCE8ED"
     />
     <text
-        x="${statisticCenters[2]}"
-        y="${layout.statisticsCardsY + 28}"
+        x="${statisticCenter3}"
+        y="${statisticLabelY}"
         font-size="11"
         fill="#78909C"
         text-anchor="middle"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >累计在线 · ONLINE TIME</text>
     <text
-        x="${statisticCenters[2]}"
-        y="${layout.statisticsCardsY + 61}"
-        font-size="22"
+        x="${statisticCenter3}"
+        y="${statisticValueY}"
+        font-size="21"
         font-weight="700"
         fill="#263238"
         text-anchor="middle"
-        dominant-baseline="central"
-    >${escapeXml(onlineMinutes)}</text>
-    <!-- 04 时间信息 -->
-    <text
-        x="${layout.contentX}"
-        y="${layout.timeTitleY}"
-        font-size="14"
-        font-weight="700"
-        fill="#0288D1"
-        dominant-baseline="text-before-edge"
-    >04　账户与活动时间</text>
-    <text
-        x="${layout.contentRight}"
-        y="${layout.timeTitleY + 1}"
-        font-size="11"
-        fill="#78909C"
-        text-anchor="end"
-        dominant-baseline="text-before-edge"
-    >中国标准时间 · UTC+8</text>
+        dominant-baseline="middle"
+    >${escapeXml(
+        formatOnlineMinutes(
+            data.online_time,
+            onlineMinutesFractionDigits
+        )
+    )}</text>
+    <!-- 04 账户与活动时间 -->
+    ${renderSectionTitle(
+        '04',
+        '账户与活动时间',
+        layout.timeTitleY,
+        '中国标准时间 · UTC+8'
+    )}
     <rect
         x="${layout.contentX}"
         y="${layout.timeCardY}"
         width="${layout.contentWidth}"
-        height="134"
+        height="${layout.timeCardHeight}"
         rx="7"
         fill="#FAFCFD"
         stroke="#DCE8ED"
     />
     <line
-        x1="${layout.contentX + 24}"
-        y1="${layout.timeCardY + 67}"
-        x2="${layout.contentRight - 24}"
-        y2="${layout.timeCardY + 67}"
+        x1="${timeInnerX}"
+        y1="${layout.timeCardY + 72}"
+        x2="${timeInnerRight}"
+        y2="${layout.timeCardY + 72}"
         stroke="#E3EBEF"
     />
+    <!-- 时间第一行 -->
     <text
-        x="${timeLeftX}"
-        y="${layout.timeCardY + 22}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="central"
+        x="${timeColumn1X}"
+        y="${
+        timeRow1Center +
+        timeLabelOffset
+    }"
+        class="field-label"
     >首次记录时间</text>
     <text
-        x="${timeLeftX}"
-        y="${layout.timeCardY + 46}"
-        font-size="14"
-        font-weight="700"
-        fill="#37474F"
-        dominant-baseline="central"
+        x="${timeColumn1X}"
+        y="${
+        timeRow1Center +
+        timeValueOffset
+    }"
+        class="field-value"
     >${escapeXml(
         formatChinaTime(
             data.first_record_time,
-            naiveTimestampTimeZone
+            naiveTimeZone
         )
     )}</text>
     <text
-        x="${timeRightX}"
-        y="${layout.timeCardY + 22}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="central"
+        x="${timeColumn2X}"
+        y="${
+        timeRow1Center +
+        timeLabelOffset
+    }"
+        class="field-label"
     >最近进入服务器</text>
     <text
-        x="${timeRightX}"
-        y="${layout.timeCardY + 46}"
-        font-size="14"
-        font-weight="700"
-        fill="#37474F"
-        dominant-baseline="central"
+        x="${timeColumn2X}"
+        y="${
+        timeRow1Center +
+        timeValueOffset
+    }"
+        class="field-value"
     >${escapeXml(
         formatChinaTime(
             data.last_join_time,
-            naiveTimestampTimeZone
+            naiveTimeZone
         )
     )}</text>
+    <!-- 时间第二行 -->
     <text
-        x="${timeLeftX}"
-        y="${layout.timeCardY + 89}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="central"
+        x="${timeColumn1X}"
+        y="${
+        timeRow2Center +
+        timeLabelOffset
+    }"
+        class="field-label"
     >最近离开服务器</text>
     <text
-        x="${timeLeftX}"
-        y="${layout.timeCardY + 113}"
-        font-size="14"
-        font-weight="700"
-        fill="#37474F"
-        dominant-baseline="central"
+        x="${timeColumn1X}"
+        y="${
+        timeRow2Center +
+        timeValueOffset
+    }"
+        class="field-value"
     >${escapeXml(
         formatChinaTime(
             data.last_leave_time,
-            naiveTimestampTimeZone
+            naiveTimeZone
         )
     )}</text>
     <text
-        x="${timeRightX}"
-        y="${layout.timeCardY + 89}"
-        font-size="11"
-        fill="#78909C"
-        dominant-baseline="central"
+        x="${timeColumn2X}"
+        y="${
+        timeRow2Center +
+        timeLabelOffset
+    }"
+        class="field-label"
     >金币快照时间</text>
     <text
-        x="${timeRightX}"
-        y="${layout.timeCardY + 113}"
-        font-size="14"
-        font-weight="700"
-        fill="#37474F"
-        dominant-baseline="central"
+        x="${timeColumn2X}"
+        y="${
+        timeRow2Center +
+        timeValueOffset
+    }"
+        class="field-value"
     >${escapeXml(moneyTime)}</text>
     <!-- 05 金币历史 -->
-    <text
-        x="${layout.contentX}"
-        y="${layout.historyTitleY}"
-        font-size="14"
-        font-weight="700"
-        fill="#0288D1"
-        dominant-baseline="text-before-edge"
-    >05　金币历史</text>
-    <text
-        x="${layout.contentRight}"
-        y="${layout.historyTitleY + 1}"
-        font-size="11"
-        fill="#78909C"
-        text-anchor="end"
-        dominant-baseline="text-before-edge"
-    >${escapeXml(historySummary)}</text>
+    ${renderSectionTitle(
+        '05',
+        '金币历史',
+        layout.historyTitleY,
+        historySummary
+    )}
     <rect
         x="${layout.contentX}"
         y="${layout.historyCardY}"
         width="${layout.contentWidth}"
-        height="170"
+        height="${layout.historyCardHeight}"
         rx="7"
         fill="#FAFCFD"
         stroke="#DCE8ED"
     />
-    ${renderMoneyChartSvg(
-        sampledMoneyHistory,
-        layout.historyCardY,
-        naiveTimestampTimeZone
+    ${renderMoneyChart(
+        displayedHistory,
+        layout,
+        naiveTimeZone
     )}
     <!-- 06 最近消息 -->
-    <text
-        x="${layout.contentX}"
-        y="${layout.messagesTitleY}"
-        font-size="14"
-        font-weight="700"
-        fill="#0288D1"
-        dominant-baseline="text-before-edge"
-    >06　最近消息</text>
-    <text
-        x="${layout.contentRight}"
-        y="${layout.messagesTitleY + 1}"
-        font-size="11"
-        fill="#78909C"
-        text-anchor="end"
-        dominant-baseline="text-before-edge"
-    >${escapeXml(messageSummary)}</text>
+    ${renderSectionTitle(
+        '06',
+        '最近消息',
+        layout.messagesTitleY,
+        messageSummary
+    )}
     <rect
         x="${layout.contentX}"
         y="${layout.messagesCardY}"
@@ -2027,12 +2143,10 @@ export function createPlayerCardSvg(
         fill="#FAFCFD"
         stroke="#DCE8ED"
     />
-    ${renderRecentMessagesSvg(
+    ${renderMessages(
         displayedMessages,
-        layout.messagesCardY,
-        layout.contentX +
-        layout.contentWidth / 2,
-        naiveTimestampTimeZone
+        layout,
+        naiveTimeZone
     )}
     <!-- 页脚 -->
     <text
@@ -2040,7 +2154,7 @@ export function createPlayerCardSvg(
         y="${layout.footerY}"
         font-size="10"
         fill="#90A4AE"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >PLAYER DATA · MATERIAL LIGHT BLUE</text>
     <text
         x="${layout.contentRight}"
@@ -2048,7 +2162,7 @@ export function createPlayerCardSvg(
         font-size="10"
         fill="#90A4AE"
         text-anchor="end"
-        dominant-baseline="central"
+        dominant-baseline="middle"
     >TIME ZONE · ASIA/SHANGHAI</text>
 </svg>
     `.trim();
