@@ -148,12 +148,6 @@ export class init {
                 // 获取用户信息
                 const user_info = storage?.get_user_info(player_name) || null
 
-                console.log("[info] 实时查询数据:", {
-                    username: player_name,
-                    money: amount,
-                    user_info,
-                })
-
                 // 判断是否在线
                 const is_online = this.check_player_online(game_instance, player_name)
 
@@ -215,13 +209,6 @@ export class init {
 
         const latest = money_history[money_history.length - 1]
         const amount = String(latest.money).split(",").join("")
-
-        console.log("[info] 历史查询数据:", {
-            username: player_name,
-            money: amount,
-            money_time: latest.timestamp,
-            user_info,
-        })
 
         // 扣除积分
         if (storage && billing_username) {
