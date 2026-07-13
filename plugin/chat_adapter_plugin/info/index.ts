@@ -136,7 +136,7 @@ export class init {
                 settled = true
                 clearTimeout(timer)
                 game_instance.event.off("message", on_message)
-                remove_pending()
+                remove_pending(false)
 
                 const amount = match[2].split(",").join("")
 
@@ -157,6 +157,7 @@ export class init {
                 }
 
                 await this.render_and_send(data, player_name, amount, "realtime", undefined, user_info, is_online, billing_username, cost, storage)
+                release_plugin_lock(user_id)
             }
         }
 
@@ -172,10 +173,10 @@ export class init {
         const task: PendingTask = { game_instance, listener: on_message, timer, user_id }
         this.pending_tasks.push(task)
 
-        const remove_pending = () => {
+        const remove_pending = (release_lock: boolean = true) => {
             const idx = this.pending_tasks.indexOf(task)
             if (idx >= 0) this.pending_tasks.splice(idx, 1)
-            release_plugin_lock(user_id)
+            if (release_lock) release_plugin_lock(user_id)
         }
 
         game_instance.event.on("message", on_message)
@@ -215,9 +216,9 @@ export class init {
             storage.del_point(billing_username, cost)
         }
 
-        release_plugin_lock(user_id)
-
-        this.render_and_send(data, player_name, amount, "history", latest.timestamp, user_info, null, billing_username, cost, storage)
+        this.render_and_send(data, player_name, amount, "history", latest.timestamp, user_info, null, billing_username, cost, storage).then(() => {
+            release_plugin_lock(user_id)
+        })
     }
 
     /** 通过 bot.players 判断玩家是否在线（大小写不敏感） */
