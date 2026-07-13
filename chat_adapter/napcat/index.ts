@@ -17,7 +17,7 @@ export class init {
             port: napcatConfig.port || 3001,
             accessToken: napcatConfig.accessToken || '',
             reconnection: {
-                enable: napcatConfig.reconnection?.enable !== false, // 默认为 true
+                enable: napcatConfig.reconnection?.enable || true, // 默认为 true
                 attempts: napcatConfig.reconnection?.attempts || 10,
                 delay: napcatConfig.reconnection?.delay || 10000
             }

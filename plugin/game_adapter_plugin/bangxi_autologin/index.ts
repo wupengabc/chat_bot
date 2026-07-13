@@ -17,7 +17,7 @@ export class init {
     }
 
     event_handler(event: any, data: any) {
-        if (event === "login") {
+        if (event === "message") {
             if (data.adapter === "mineflayer" && data.instance_name === "bangxi") {
                 const login = () => {
                     const instance = get_game_adapter("mineflayer", "bangxi");
@@ -28,7 +28,9 @@ export class init {
                         }, 1000)
                     }
                 }
-                login()
+                if (data.message.plainText.includes("请输入“ /login <密码> ”以登录") && data.position === "system") {
+                    login()
+                }
             }
         }
     }
