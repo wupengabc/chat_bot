@@ -137,6 +137,16 @@ const message_table = sqliteTable("message", {
     create_time: text("create_time").notNull(),
 })
 
+const point_log_table = sqliteTable("point_log", {
+    id: integer("id").primaryKey({autoIncrement: true}),
+    game_id: text("game_id").notNull(),
+    action: text("action").notNull(),
+    num: integer("num").notNull(),
+    reason: text("reason").notNull(),
+    ext: text("ext"),
+    create_at: text("create_at").notNull(),
+})
+
 export class init {
     private database_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "bangxi_server.db")
     private last_player_list_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "last_player_list.json")
@@ -156,21 +166,22 @@ export class init {
     public user_permission_map = {
         "member": 0,
         "admin": 1,
-        "owner": 2
+        "owner": 2,
+        "point_admin": 3
     }
 
     /** 声明控制台命令 */
     public console_commands = {
         change_permission: {
             description: "修改用户权限",
-            args: ["username", "permission(member|admin|owner)"],
+            args: ["username", "permission(member|admin|owner|point_admin)"],
             handler: (args: string[]) => {
                 const [username, permission] = args
                 if (!username || !permission) {
                     return "用法: /storage select bangxi_server_storage change_permission <username> <permission>"
                 }
-                if (!["member", "admin", "owner"].includes(permission)) {
-                    return `错误: 权限必须是 member, admin 或 owner`
+                if (!["member", "admin", "owner", "point_admin"].includes(permission)) {
+                    return `错误: 权限必须是 member, admin, owner 或 point_admin`
                 }
                 try {
                     this.change_permission(username, permission as keyof typeof this.user_permission_map)
@@ -197,6 +208,10 @@ export class init {
         this.database.exec(user_table_init_sql)
         const message_table_init_sql = orm_utils.convert_table_to_sqlite_sql(message_table)
         this.database.exec(message_table_init_sql)
+        const point_log_table_init_sql = orm_utils.convert_table_to_sqlite_sql(point_log_table)
+        this.database.exec(point_log_table_init_sql)
+        this.database.exec("CREATE INDEX IF NOT EXISTS idx_point_log_game_id ON point_log(game_id)")
+        this.database.exec("CREATE INDEX IF NOT EXISTS idx_point_log_sign_lookup ON point_log(game_id, ext, create_at)")
         this.restore_player_list()
     }
 
@@ -455,11 +470,16 @@ export class init {
                 const point_transfer_msg = parsePointTransferMessage(data.message.plainText)
                 if (point_transfer_msg) {
                     this.ensure_user_exists(point_transfer_msg.username)
-                    const add_point = Math.round(point_transfer_msg.point * 100)
-                    this.orm.update(user_table)
-                        .set({point: sql`${user_table.point} + ${add_point}`})
-                        .where(eq(user_table.username, point_transfer_msg.username))
-                        .run()
+                    const result = this.change_point(
+                        point_transfer_msg.username,
+                        "add",
+                        point_transfer_msg.point,
+                        "用户通过bot充值",
+                        "bot_recharge"
+                    )
+                    if (!result.success) {
+                        storage_logger("bangxi_server_storage", `用户 ${point_transfer_msg.username} 充值积分失败: ${result.message}`, "error")
+                    }
                 }
                 this.orm.insert(message_table).values({
                     username: "system",
@@ -545,37 +565,100 @@ export class init {
             .run();
     }
 
-    check_point(username: string, point: number) {
-        this.ensure_user_exists(username)
-        const row = this.orm.select({point: user_table.point})
-            .from(user_table)
-            .where(eq(user_table.username, username))
-            .get()
-        if (row) {
-            if (row.point >= point * 100) {
-                return { status: true, point: row.point / 100 }
-            } else {
-                return { status: false, point: row.point / 100 }
-            }
-        } else {
-            return { status: false, point: 0 }
+    /** 查询已存在玩家的积分余额。point 为对外积分单位，point_minor 为数据库整数单位。 */
+    get_point_balance(game_id: string) {
+        const row = this.database.prepare(
+            "SELECT username, point FROM user WHERE LOWER(username) = LOWER(?) LIMIT 1"
+        ).get(game_id) as {username: string, point: number | null} | undefined
+
+        if (!row) return {success: false as const, message: "玩家不存在"}
+        const point_minor = row.point || 0
+        return {success: true as const, game_id: row.username, point: point_minor / 100, point_minor}
+    }
+
+    /** 原子修改积分并记录流水；所有修改必须提供理由，删除积分时不允许余额变为负数。 */
+    change_point(game_id: string, action: "add" | "remove", point: number, reason: string, ext: string | null = null) {
+        const normalized_reason = typeof reason === "string" ? reason.trim() : ""
+        if (action !== "add" && action !== "remove") {
+            return {success: false as const, message: "积分操作类型无效"}
         }
+        if (!normalized_reason) {
+            return {success: false as const, message: "积分修改必须提供 reason"}
+        }
+        if (normalized_reason.length > 200) {
+            return {success: false as const, message: "reason 最多 200 个字符"}
+        }
+
+        const point_minor = Math.round(point * 100)
+        if (!Number.isFinite(point) || point_minor <= 0 || point_minor !== point * 100) {
+            return {success: false as const, message: "积分数量必须大于 0 且最多两位小数"}
+        }
+
+        return this.database.transaction(() => {
+            const row = this.database.prepare(
+                "SELECT username, point FROM user WHERE LOWER(username) = LOWER(?) LIMIT 1"
+            ).get(game_id) as {username: string, point: number | null} | undefined
+            if (!row) return {success: false as const, message: "玩家不存在"}
+
+            const current_minor = row.point || 0
+            if (action === "remove" && current_minor < point_minor) {
+                return {success: false as const, message: "积分余额不足", point: current_minor / 100}
+            }
+
+            const balance_minor = action === "add"
+                ? current_minor + point_minor
+                : current_minor - point_minor
+            const create_at = new Date().toISOString()
+            this.database.prepare("UPDATE user SET point = ? WHERE username = ?")
+                .run(balance_minor, row.username)
+            this.database.prepare(
+                "INSERT INTO point_log (game_id, action, num, reason, ext, create_at) VALUES (?, ?, ?, ?, ?, ?)"
+            ).run(row.username, action, point_minor, normalized_reason, ext, create_at)
+
+            return {
+                success: true as const,
+                game_id: row.username,
+                point: balance_minor / 100,
+                changed_point: point_minor / 100
+            }
+        })()
     }
 
-    del_point(username: string, point: number) {
-        this.ensure_user_exists(username)
-        this.orm.update(user_table)
-            .set({point: sql`${user_table.point} - ${point * 100}`})
-            .where(eq(user_table.username, username))
-            .run()
-    }
+    /** 按 Asia/Shanghai 日期原子完成每日签到和流水记录。 */
+    sign_point(game_id: string, reward_point: number, sign_date: string) {
+        const reward_minor = Math.round(reward_point * 100)
+        if (!Number.isFinite(reward_point) || reward_minor < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(sign_date)) {
+            return {success: false as const, message: "签到参数无效"}
+        }
 
-    add_point(username: string, point: number) {
-        this.ensure_user_exists(username)
-        this.orm.update(user_table)
-            .set({point: sql`${user_table.point} + ${point * 100}`})
-            .where(eq(user_table.username, username))
-            .run()
+        const start_at = new Date(`${sign_date}T00:00:00+08:00`)
+        const end_at = new Date(start_at.getTime() + 24 * 60 * 60 * 1000)
+        return this.database.transaction(() => {
+            const row = this.database.prepare(
+                "SELECT username, point FROM user WHERE LOWER(username) = LOWER(?) LIMIT 1"
+            ).get(game_id) as {username: string, point: number | null} | undefined
+            if (!row) return {success: false as const, message: "玩家不存在"}
+
+            const signed = this.database.prepare(
+                "SELECT id FROM point_log WHERE LOWER(game_id) = LOWER(?) AND action = 'add' AND ext = 'sign' AND create_at >= ? AND create_at < ? LIMIT 1"
+            ).get(row.username, start_at.toISOString(), end_at.toISOString())
+            if (signed) return {success: false as const, message: "今天已经签到过了"}
+
+            const balance_minor = (row.point || 0) + reward_minor
+            const create_at = new Date().toISOString()
+            this.database.prepare("UPDATE user SET point = ? WHERE username = ?")
+                .run(balance_minor, row.username)
+            this.database.prepare(
+                "INSERT INTO point_log (game_id, action, num, reason, ext, create_at) VALUES (?, 'add', ?, '每日签到', 'sign', ?)"
+            ).run(row.username, reward_minor, create_at)
+
+            return {
+                success: true as const,
+                game_id: row.username,
+                point: balance_minor / 100,
+                reward_point: reward_minor / 100
+            }
+        })()
     }
 
     /** 查询玩家完整信息，不存在则返回 null */

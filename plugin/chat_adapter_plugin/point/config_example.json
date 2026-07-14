@@ -1,0 +1,21 @@
+{
+  "name": "point",
+  "description": "积分查询、管理和每日签到",
+  "config_template": {
+    "sign_rewards": [
+      { "point": 100, "probability": 0.1 },
+      { "point": 20, "probability": 0.2 },
+      { "point": 30, "probability": 0.7 }
+    ]
+  },
+  "configs": [
+    {
+      "name": "default",
+      "sign_rewards": [
+        { "point": 100, "probability": 0.1 },
+        { "point": 20, "probability": 0.2 },
+        { "point": 30, "probability": 0.7 }
+      ]
+    }
+  ]
+}

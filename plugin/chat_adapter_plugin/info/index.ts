@@ -88,10 +88,11 @@ export class init {
                 // 积分检查
                 const storage = get_storage("bangxi_server_storage")
                 if (storage && bound_game_id) {
-                    const point_check = storage.check_point(bound_game_id, cost)
-                    if (!point_check.status) {
+                    const point_balance = storage.get_point_balance(bound_game_id)
+                    if (!point_balance.success || point_balance.point < cost) {
+                        const current_point = point_balance.success ? point_balance.point : 0
                         send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
-                            [Structs.at(data.sender.user_id), Structs.text(`积分不足，查询${is_self ? "自己" : "他人"}需要${cost}积分，当前余额: ${point_check.point.toFixed(2)}`)], data.origin_object)
+                            [Structs.at(data.sender.user_id), Structs.text(`积分不足，查询${is_self ? "自己" : "他人"}需要${cost}积分，当前余额: ${current_point.toFixed(2)}`)], data.origin_object)
                         release_plugin_lock(user_id)
                         return
                     }
@@ -158,9 +159,21 @@ export class init {
                 // 判断是否在线
                 const is_online = this.check_player_online(game_instance, player_name)
 
-                // 扣除积分
+                // 扣除积分并记录理由
                 if (storage && billing_username) {
-                    storage.del_point(billing_username, cost)
+                    const point_result = storage.change_point(
+                        billing_username,
+                        "remove",
+                        cost,
+                        `查询玩家 ${player_name} 信息（实时）`,
+                        "info_realtime"
+                    )
+                    if (!point_result.success) {
+                        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                            [Structs.at(data.sender.user_id), Structs.text(`扣除积分失败: ${point_result.message}`)], data.origin_object)
+                        release_plugin_lock(user_id)
+                        return
+                    }
                 }
 
                 await this.render_and_send(data, player_name, amount, "realtime", undefined, user_info, is_online, billing_username, cost, storage)
@@ -218,9 +231,21 @@ export class init {
         const latest = money_history[money_history.length - 1]
         const amount = String(latest.money).split(",").join("")
 
-        // 扣除积分
+        // 扣除积分并记录理由
         if (storage && billing_username) {
-            storage.del_point(billing_username, cost)
+            const point_result = storage.change_point(
+                billing_username,
+                "remove",
+                cost,
+                `查询玩家 ${player_name} 信息（历史缓存）`,
+                "info_history"
+            )
+            if (!point_result.success) {
+                send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                    [Structs.at(data.sender.user_id), Structs.text(`扣除积分失败: ${point_result.message}`)], data.origin_object)
+                release_plugin_lock(user_id)
+                return
+            }
         }
 
         this.render_and_send(data, player_name, amount, "history", latest.timestamp, user_info, null, billing_username, cost, storage).then(() => {
@@ -271,9 +296,10 @@ export class init {
 
         // 发送扣分提示
         if (storage && billing_username) {
-            const remaining = storage.check_point(billing_username, 0)
+            const remaining = storage.get_point_balance(billing_username)
+            const remaining_point = remaining.success ? remaining.point : 0
             send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
-                [Structs.at(data.sender.user_id), Structs.text(`已扣除${cost}积分，剩余: ${remaining.point.toFixed(2)}`)], data.origin_object)
+                [Structs.at(data.sender.user_id), Structs.text(`已扣除${cost}积分，剩余: ${remaining_point.toFixed(2)}`)], data.origin_object)
         }
     }
 }

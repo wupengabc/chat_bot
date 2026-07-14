@@ -224,7 +224,7 @@ async function load_plugin_from_dir(sub_dir: string, default_adapters: string[])
                     ? instance.adapters
                     : default_adapters
                 running_plugins.get(config.name)!.set(start_config.name, { instance, adapters })
-                plugin_logger(config.name, `成功启动 ${start_config.name}（分发器: ${adapters.join(", ")}）`, "info")
+                plugin_logger(config.name, `成功启动 [${plugin_name}] [${start_config.name}]（分发器: ${adapters.join(", ")}）`, "info")
             } catch (error: any) {
                 plugin_logger(config.name, `初始化 ${start_config.name} 失败: ${error.message || error}`, "error")
             }
