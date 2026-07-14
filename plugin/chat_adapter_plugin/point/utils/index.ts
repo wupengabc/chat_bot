@@ -51,7 +51,7 @@ export function renderPointLogs(gameId: string, logs: PointLogItem[]): Buffer {
         const color = added ? "#16865C" : "#C5483B"
         const background = index % 2 === 0 ? "#FFFFFF" : "#F7F4EC"
         return `<rect x="30" y="${y}" width="860" height="${rowHeight}" fill="${background}"/>
-<circle cx="66" cy="${y + 38}" r="19" fill="${color}" opacity="0.12"/>
+<rect x="47" y="${y + 19}" width="38" height="38" fill="${color}" opacity="0.12"/>
 <text x="66" y="${y + 44}" text-anchor="middle" font-size="24" font-weight="700" fill="${color}">${sign}</text>
 <text x="104" y="${y + 31}" font-size="17" font-weight="650" fill="#262821">${escapeXml(truncate(log.reason, 30))}</text>
 <text x="104" y="${y + 55}" font-size="13" fill="#858277">${escapeXml(formatTime(log.create_at))} · 流水号 ${log.id}</text>
@@ -62,13 +62,13 @@ export function renderPointLogs(gameId: string, logs: PointLogItem[]): Buffer {
         : ""
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <rect width="${width}" height="${height}" fill="#EEE9DD"/>
-<rect x="30" y="26" width="860" height="${height - 52}" rx="20" fill="#FFFFFF" stroke="#D9D2C3"/>
-<rect x="30" y="26" width="12" height="100" rx="6" fill="#D99025"/>
+<rect x="30" y="26" width="860" height="${height - 52}" fill="#FFFFFF" stroke="#D9D2C3"/>
+<rect x="30" y="26" width="12" height="100" fill="#D99025"/>
 <text x="66" y="72" font-size="30" font-weight="800" fill="#24251F">积分流水</text>
 <text x="66" y="105" font-size="16" fill="#777469">玩家 ${escapeXml(gameId)} · 最新 ${logs.length} 条记录</text>
 <line x1="66" y1="130" x2="854" y2="130" stroke="#DED8CB"/>
 ${rows}${empty}
-<text x="854" y="${height - 18}" text-anchor="end" font-size="12" fill="#999588">邦溪服务器积分中心</text>
+<text x="854" y="${height - 18}" text-anchor="end" font-size="12" fill="#999588">ChatBot Point Log</text>
 </svg>`
     const png = new Resvg(svg, {
         font: {loadSystemFonts: true, defaultFontFamily: "Microsoft YaHei"}

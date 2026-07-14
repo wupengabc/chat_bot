@@ -6,11 +6,13 @@ import {fileURLToPath} from "node:url"
 const root = path.dirname(fileURLToPath(import.meta.url))
 const repository = process.env.UPDATE_REPOSITORY ?? "sg250/chat_bot"
 const branch = process.env.UPDATE_BRANCH ?? "main"
-const interval = Number(process.env.UPDATE_INTERVAL_MS ?? 300_000)
+const interval = Number(process.env.UPDATE_INTERVAL_MS ?? 60_000)
 const statePath = path.join(root, ".laugher-state.json")
 let app: ChildProcess | null = null
 let checking = false
 let shuttingDown = false
+let restarting = false
+let restartTimer: ReturnType<typeof setTimeout> | null = null
 
 type TreeItem = {path: string, type: "blob" | "tree", sha: string}
 type State = {files: Record<string, string>}
@@ -63,26 +65,89 @@ function syncConfig(examplePath: string, template: unknown): void {
     console.log(`[laugher] 配置不存在，已根据模板创建: ${relative}`)
 }
 function startApp(): void {
-    if (shuttingDown) return
+    if (shuttingDown || app) return
     const tsx = path.join(root, "node_modules", "tsx", "dist", "cli.mjs")
-    app = spawn(process.execPath, [tsx, "index.ts"], {cwd: root, stdio: "inherit"})
-    app.on("exit", code => {
-        app = null
-        if (!shuttingDown) {
+    const child = spawn(process.execPath, [tsx, "index.ts"], {
+        cwd: root,
+        stdio: "inherit",
+        detached: process.platform !== "win32"
+    })
+    app = child
+    child.on("exit", code => {
+        if (app === child) app = null
+        if (!shuttingDown && !restarting) {
             console.error(`[laugher] 应用退出（${code ?? "signal"}），5 秒后重启`)
-            setTimeout(startApp, 5000)
+            if (restartTimer) clearTimeout(restartTimer)
+            restartTimer = setTimeout(() => {
+                restartTimer = null
+                startApp()
+            }, 5000)
         }
     })
 }
 
-async function restartApp(): Promise<void> {
-    if (!app) return startApp()
+async function forceKillProcessTree(child: ChildProcess): Promise<void> {
+    if (!child.pid) return
+    if (process.platform === "win32") {
+        await new Promise<void>(resolve => {
+            const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {stdio: "ignore"})
+            killer.once("error", () => resolve())
+            killer.once("exit", () => resolve())
+        })
+        return
+    }
+
+    try {
+        process.kill(-child.pid, "SIGKILL")
+    } catch {
+        try {
+            child.kill("SIGKILL")
+        } catch {
+            // 进程已经退出
+        }
+    }
+}
+
+function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+    if (process.platform !== "win32" && child.pid) {
+        try {
+            process.kill(-child.pid, signal)
+            return
+        } catch {
+            // 进程组不存在时退回普通 kill
+        }
+    }
+    child.kill(signal)
+}
+
+async function stopApp(signal: NodeJS.Signals = "SIGTERM"): Promise<void> {
+    if (!app) return
     const child = app
+    app = null
     await new Promise<void>(resolve => {
-        const timer = setTimeout(() => child.kill("SIGKILL"), 10_000)
-        child.once("exit", () => { clearTimeout(timer); resolve() })
-        child.kill("SIGTERM")
+        let settled = false
+        const finish = () => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            resolve()
+        }
+        const timer = setTimeout(() => {
+            void forceKillProcessTree(child).finally(finish)
+        }, 10_000)
+        child.once("exit", finish)
+        signalProcessTree(child, signal)
     })
+}
+
+async function restartApp(): Promise<void> {
+    restarting = true
+    if (restartTimer) {
+        clearTimeout(restartTimer)
+        restartTimer = null
+    }
+    await stopApp()
+    restarting = false
     startApp()
 }
 
@@ -126,16 +191,15 @@ async function checkForUpdates(initial = false): Promise<void> {
     }
 }
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
+    if (shuttingDown) return
     shuttingDown = true
-    console.log(`[laugher] 收到 ${signal}，正在停止`)
-    if (app) {
-        const child = app
-        await new Promise<void>(resolve => {
-            const timer = setTimeout(() => child.kill("SIGKILL"), 10_000)
-            child.once("exit", () => { clearTimeout(timer); resolve() })
-            child.kill(signal)
-        })
+    restarting = false
+    if (restartTimer) {
+        clearTimeout(restartTimer)
+        restartTimer = null
     }
+    console.log(`[laugher] 收到 ${signal}，正在停止`)
+    await stopApp(signal)
     process.exit(0)
 }
 

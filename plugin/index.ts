@@ -174,6 +174,11 @@ export function plugin_handle_adapter_event(adapter: string, event: string, data
     }
 }
 
+/** 获取已注册插件名称，供控制台补全使用 */
+export function get_plugin_names(): string[] {
+    return Array.from(running_plugins.keys())
+}
+
 /** 获取已注册的插件实例 */
 export function get_plugin(plugin_name: string, config_name: string): any {
     return running_plugins.get(plugin_name)?.get(config_name)?.instance

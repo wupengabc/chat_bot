@@ -110,6 +110,17 @@ export function get_storage(plugin: string) {
     return running_storage.get(plugin)
 }
 
+/** 获取已注册 storage 名称，供控制台补全使用 */
+export function get_storage_names(): string[] {
+    return Array.from(running_storage.keys())
+}
+
+/** 获取 storage 控制台命令名称，供控制台补全使用 */
+export function get_storage_command_names(storage_name: string): string[] {
+    const commands = running_storage.get(storage_name)?.console_commands
+    return commands ? Object.keys(commands) : []
+}
+
 /**
  * 执行 storage 的控制台命令
  * @param storage_name storage 名称
