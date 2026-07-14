@@ -1,0 +1,13 @@
+{
+  "name": "bangxi_autohome",
+  "description": "自动home插件",
+  "config_template": {
+    "password": "your_password_here"
+  },
+  "configs": [
+    {
+      "name": "example",
+      "password": "your_password_here"
+    }
+  ]
+}

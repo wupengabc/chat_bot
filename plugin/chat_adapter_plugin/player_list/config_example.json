@@ -1,0 +1,10 @@
+{
+  "name": "player_list_chat",
+  "description": "玩家列表插件, 用于显示玩家列表",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}

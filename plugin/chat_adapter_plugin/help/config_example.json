@@ -1,0 +1,10 @@
+{
+  "name": "help_chat",
+  "description": "帮助插件, 用于显示帮助信息",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}

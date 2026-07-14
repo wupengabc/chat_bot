@@ -1,0 +1,10 @@
+{
+  "name": "message_chat",
+  "description": "消息插件, 用于显示消息记录",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}

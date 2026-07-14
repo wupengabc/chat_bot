@@ -1,0 +1,10 @@
+{
+  "name": "baltop_chat",
+  "description": "获取服务器金币排行榜",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "ai_handler_chat",
+  "description": "AI Handler Chat Adapter",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}

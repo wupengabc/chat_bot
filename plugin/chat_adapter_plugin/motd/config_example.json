@@ -1,0 +1,10 @@
+{
+  "name": "motd_chat",
+  "description": "motd 插件, 用于获取Minecraft服务器的 MOTD 信息",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}

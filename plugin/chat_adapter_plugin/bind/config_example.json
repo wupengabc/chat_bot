@@ -1,0 +1,10 @@
+{
+  "name": "bind_chat",
+  "description": "绑定您的游戏账户到Chat",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}

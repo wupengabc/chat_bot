@@ -1,0 +1,10 @@
+{
+  "name": "info_chat",
+  "description": "消息插件, 用于显示玩家信息",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "example"
+    }
+  ]
+}
