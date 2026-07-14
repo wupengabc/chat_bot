@@ -68,7 +68,7 @@ export function renderPointLogs(gameId: string, logs: PointLogItem[]): Buffer {
 <text x="66" y="105" font-size="16" fill="#777469">玩家 ${escapeXml(gameId)} · 最新 ${logs.length} 条记录</text>
 <line x1="66" y1="130" x2="854" y2="130" stroke="#DED8CB"/>
 ${rows}${empty}
-<text x="854" y="${height - 18}" text-anchor="end" font-size="12" fill="#999588">ChatBot Point Log</text>
+<text x="854" y="${height - 38}" text-anchor="end" font-size="12" fill="#999588">ChatBot Point Log</text>
 </svg>`
     const png = new Resvg(svg, {
         font: {loadSystemFonts: true, defaultFontFamily: "Microsoft YaHei"}

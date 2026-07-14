@@ -69,11 +69,13 @@ function startApp(): void {
     const tsx = path.join(root, "node_modules", "tsx", "dist", "cli.mjs")
     const child = spawn(process.execPath, [tsx, "index.ts"], {
         cwd: root,
-        stdio: "inherit",
+        stdio: ["pipe", "inherit", "inherit"],
         detached: process.platform !== "win32"
     })
     app = child
+    if (child.stdin) process.stdin.pipe(child.stdin, {end: false})
     child.on("exit", code => {
+        if (child.stdin) process.stdin.unpipe(child.stdin)
         if (app === child) app = null
         if (!shuttingDown && !restarting) {
             console.error(`[laugher] 应用退出（${code ?? "signal"}），5 秒后重启`)
@@ -151,6 +153,35 @@ async function restartApp(): Promise<void> {
     startApp()
 }
 
+const coreFiles = new Set([
+    "index.ts",
+    "storage/index.ts",
+    "plugin/index.ts",
+    "chat_adapter/index.ts",
+    "game_adapter/index.ts",
+])
+
+function reloadUpdatedModules(changedFiles: string[]): void {
+    if (!app?.stdin?.writable) {
+        console.warn("[laugher] 应用输入流不可用，将执行完整重启")
+        void restartApp()
+        return
+    }
+
+    const commands = new Set<string>()
+    for (const file of changedFiles) {
+        if (file.startsWith("plugin/")) commands.add("/plugin reload")
+        if (file.startsWith("storage/")) commands.add("/storage reload")
+        if (file.startsWith("chat_adapter/")) commands.add("/chat reload")
+        if (file.startsWith("game_adapter/")) commands.add("/game reload")
+    }
+
+    for (const command of commands) {
+        app.stdin.write(`${command}\n`)
+        console.log(`[laugher] 已发送热重载命令: ${command}`)
+    }
+}
+
 async function checkForUpdates(initial = false): Promise<void> {
     if (checking) return
     checking = true
@@ -164,11 +195,13 @@ async function checkForUpdates(initial = false): Promise<void> {
             (item.path.endsWith(".ts") || item.path.endsWith("config_example.json"))
         )
         let changed = 0
+        const changedFiles: string[] = []
 
         for (const item of wanted) {
             if (item.path.endsWith(".ts") && state.files[item.path] !== item.sha) {
                 writeAtomic(safePath(item.path), await download(item.path))
                 state.files[item.path] = item.sha
+                changedFiles.push(item.path)
                 console.log(`[laugher] 已同步: ${item.path}`)
                 changed++
             } else if (item.path.endsWith("config_example.json")) {
@@ -183,7 +216,14 @@ async function checkForUpdates(initial = false): Promise<void> {
 
         writeAtomic(statePath, `${JSON.stringify(state, null, 2)}\n`)
         console.log(`[laugher] ${initial ? "启动" : "定时"}检查完成，同步 ${changed} 个 TypeScript 文件`)
-        if (!initial && changed > 0) await restartApp()
+        if (!initial && changedFiles.length > 0) {
+            if (changedFiles.some(file => coreFiles.has(file))) {
+                console.log("[laugher] 核心入口文件已更新，执行完整重启")
+                await restartApp()
+            } else {
+                reloadUpdatedModules(changedFiles)
+            }
+        }
     } catch (error) {
         console.error(`[laugher] 更新检查失败: ${error instanceof Error ? error.message : error}`)
     } finally {
