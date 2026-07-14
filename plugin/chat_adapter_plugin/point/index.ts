@@ -93,7 +93,7 @@ export class init {
         if (!operator_game_id) return this.reply(data, "你暂未绑定游戏id，无法执行管理操作")
         const operator = point_storage.get_user_info(operator_game_id)
         const permission = operator ? point_storage.user_permission_map[operator.role as keyof typeof point_storage.user_permission_map] : 0
-        if (permission < 3) return this.reply(data, "权限不足，只有 permission 3 用户可以执行该操作")
+        if (permission < 2) return this.reply(data, "权限不足，只有 permission 2 用户可以执行该操作")
 
         const game_id = args[2]
         const point_text = args[3]

@@ -3,9 +3,9 @@
 # 推送完成后自动恢复本地开发链接
 #
 # 用法:
-#   .\push.ps1
-#   .\push.ps1 --force
-#   .\push.ps1 origin main
+#   .\push.ps1                  # 默认推送当前分支到 origin 和 gitee
+#   .\push.ps1 --force          # 强制推送当前分支到 origin 和 gitee
+#   .\push.ps1 origin main      # 传入参数时仅按指定参数推送
 
 $ErrorActionPreference = "Stop"
 
@@ -23,6 +23,40 @@ if (-not (Test-Path $packageJson)) {
     throw "未找到 package.json: $packageJson"
 }
 
+function Push-Repository {
+    param([object[]]$PushArgs)
+
+    if ($PushArgs.Count -gt 0 -and $PushArgs[0] -ne "--force") {
+        git -C $repoRoot push @PushArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "推送失败 (exit code: $LASTEXITCODE)"
+        }
+        return
+    }
+
+    $branch = (git -C $repoRoot branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) {
+        throw "无法获取当前 Git 分支"
+    }
+
+    $forceArgs = @()
+    if ($PushArgs -contains "--force") {
+        $forceArgs = @("--force")
+    }
+
+    foreach ($remote in @("origin", "gitee")) {
+        git -C $repoRoot remote get-url $remote 1>$null 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "未找到 Git 远程仓库: $remote"
+        }
+        Write-Host "[push.ps1] 正在推送 $branch 到 $remote..." -ForegroundColor Cyan
+        git -C $repoRoot push @forceArgs $remote $branch
+        if ($LASTEXITCODE -ne 0) {
+            throw "推送 $remote 失败 (exit code: $LASTEXITCODE)"
+        }
+    }
+}
+
 # 读取 package.json
 $content = Get-Content $packageJson -Raw
 
@@ -38,9 +72,8 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not $hasLocalLinks) {
     try {
-        # 直接传递参数数组，不要使用 -join
-        git -C $repoRoot push @args
-        $pushExit = $LASTEXITCODE
+        Push-Repository -PushArgs $args
+        $pushExit = 0
 
         if ($pushExit -ne 0) {
             throw "推送失败 (exit code: $pushExit)"
@@ -107,9 +140,8 @@ try {
     Write-Host "[push.ps1] 已替换本地链接为 GitHub 仓库，开始推送..." `
         -ForegroundColor Cyan
 
-    # 直接展开原始参数
-    git -C $repoRoot push @args
-    $pushExit = $LASTEXITCODE
+    Push-Repository -PushArgs $args
+    $pushExit = 0
 
     if ($pushExit -ne 0) {
         throw "推送失败 (exit code: $pushExit)"

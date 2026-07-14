@@ -166,22 +166,21 @@ export class init {
     public user_permission_map = {
         "member": 0,
         "admin": 1,
-        "owner": 2,
-        "point_admin": 3
+        "owner": 2
     }
 
     /** 声明控制台命令 */
     public console_commands = {
         change_permission: {
             description: "修改用户权限",
-            args: ["username", "permission(member|admin|owner|point_admin)"],
+            args: ["username", "permission(member|admin|owner)"],
             handler: (args: string[]) => {
                 const [username, permission] = args
                 if (!username || !permission) {
                     return "用法: /storage select bangxi_server_storage change_permission <username> <permission>"
                 }
-                if (!["member", "admin", "owner", "point_admin"].includes(permission)) {
-                    return `错误: 权限必须是 member, admin, owner 或 point_admin`
+                if (!["member", "admin", "owner"].includes(permission)) {
+                    return `错误: 权限必须是 member, admin 或 owner`
                 }
                 try {
                     this.change_permission(username, permission as keyof typeof this.user_permission_map)
