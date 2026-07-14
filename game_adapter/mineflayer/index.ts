@@ -17,6 +17,7 @@ export class init {
     private reconnectCount = 0
     private isReconnecting = false
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    private playerListTimer: ReturnType<typeof setInterval> | null = null
     private isStopped = false
     private config: Record<string, unknown> = {}
     private logger = (msg: string, level: LoggerType)=>{
@@ -79,6 +80,10 @@ export class init {
             if (this.reconnectTimer) {
                 clearTimeout(this.reconnectTimer)
                 this.reconnectTimer = null
+            }
+            if (this.playerListTimer) {
+                clearInterval(this.playerListTimer)
+                this.playerListTimer = null
             }
             // 断开 bot 连接
             if (this.bot) {
@@ -144,8 +149,8 @@ export class init {
             this.logger(`连接已断开（实例: ${config.name}，原因: ${reason}）`, "info")
             this.event.emit("disconnect", {adapter: "mineflayer", instance_name: config.name, reason })
             // 自动重连（仅在未被主动 stop 时）
-            if (!this.isStopped && (config.reconnection as any)?.enable) {
-                const maxReconnect = (config.reconnection as any).attempt || 3
+            if (!this.isStopped && (config.reconnection as any)?.enable !== false) {
+                const maxReconnect = (config.reconnection as any)?.attempts ?? 3
                 if (this.reconnectCount >= maxReconnect) {
                     this.logger(`实例 ${config.name} 重连次数超过上限（${maxReconnect}），停止重连`, "error")
                     this.status = "stopped"
@@ -153,9 +158,8 @@ export class init {
                 }
                 this.isReconnecting = true
                 this.status = "connecting"
-                const random = ((config.reconnection as any).interval || 5) + Math.floor(Math.random() * 21);
-                const interval = random * 1000
-                this.logger(`实例 ${config.name} 将在 ${interval / 1000} 秒后重连（第 ${this.reconnectCount + 1} 次）`, "info")
+                const delay = (config.reconnection as any)?.delay ?? 5000
+                this.logger(`实例 ${config.name} 将在 ${delay / 1000} 秒后重连（第 ${this.reconnectCount + 1} 次）`, "info")
                 if (this.reconnectTimer) {
                     clearTimeout(this.reconnectTimer)
                     this.reconnectTimer = null
@@ -164,7 +168,7 @@ export class init {
                     if (!this.isStopped) {
                         this.start(config)
                     }
-                }, interval)
+                }, delay)
             }
         })
 
@@ -195,16 +199,18 @@ export class init {
             })
         })
 
-        setInterval(()=>{
-            if (this.status === "running") {
-                const players = Object.values(this.bot.players)
-                this.event.emit("player_list", {
-                    adapter: "mineflayer",
-                    instance_name: config.name,
-                    players
-                })
-            }
-        }, 2000)
+        if (!this.playerListTimer) {
+            this.playerListTimer = setInterval(()=>{
+                if (this.status === "running" && this.bot) {
+                    const players = Object.values(this.bot.players)
+                    this.event.emit("player_list", {
+                        adapter: "mineflayer",
+                        instance_name: config.name,
+                        players
+                    })
+                }
+            }, 2000)
+        }
     }
 
     public send_message(message: string) :boolean {

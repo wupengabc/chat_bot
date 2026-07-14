@@ -54,11 +54,11 @@ async function load_game_adapter_from_dir(dir_path: string) {
                 running_game_adapters.get(config.name).set(start_config.name, result)
             } catch (error:any) {
                 game_adapter_logger("main", `game_adapter ${config.name} 初始化 ${start_config.name} 失败`, "error")
-                game_adapter_logger("main", String(error.message | error.stack), "error")
+                game_adapter_logger("main", String(error.message || error.stack || error), "error")
             }
         }
     } catch (error:any) {
-        game_adapter_logger("main", String(error.message | error.stack), "error")
+        game_adapter_logger("main", String(error.message || error.stack || error), "error")
     }
 }
 
@@ -88,7 +88,7 @@ export async function init_game_adapter() {
             await load_game_adapter_from_dir(item)
         }
     } catch (error:any) {
-        game_adapter_logger("main", String(error.message | error.stack), "error")
+        game_adapter_logger("main", String(error.message || error.stack || error), "error")
     }
 }
 

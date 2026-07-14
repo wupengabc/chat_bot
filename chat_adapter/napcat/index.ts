@@ -17,16 +17,16 @@ export class init {
             port: napcatConfig.port || 3001,
             accessToken: napcatConfig.accessToken || '',
             reconnection: {
-                enable: napcatConfig.reconnection?.enable || true, // 默认为 true
-                attempts: napcatConfig.reconnection?.attempts || 10,
-                delay: napcatConfig.reconnection?.delay || 10000
+                enable: napcatConfig.reconnection?.enable ?? true,
+                attempts: napcatConfig.reconnection?.attempts ?? 10,
+                delay: napcatConfig.reconnection?.delay ?? 10000
             }
         })
         this.napcat.connect().then(() => {
             chat_adapter_logger("napcat", `napcat 连接成功`, "info")
         }).catch((error:any) => {
             chat_adapter_logger("napcat", `napcat 连接失败`, "error")
-            chat_adapter_logger("napcat", error.message | error.stack, "error")
+            chat_adapter_logger("napcat", error.message || error.stack || String(error), "error")
         })
 
         this.napcat.on("socket.open", () => {

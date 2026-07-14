@@ -59,11 +59,11 @@ async function load_chat_adapter_from_dir(dir_path: string) {
                 running_chat_adapters.get(config.name).set(start_config.name, result)
             } catch (error:any) {
                 chat_adapter_logger("main", `chat_adapter ${config.name} 初始化 ${start_config.name} 失败`, "error")
-                chat_adapter_logger("main", error.message | error.stack, "error")
+                chat_adapter_logger("main", String(error.message || error.stack || error), "error")
             }
         }
     } catch (error:any) {
-        chat_adapter_logger("main", String(error.message | error.stack), "error")
+        chat_adapter_logger("main", String(error.message || error.stack || error), "error")
     }
 }
 
@@ -93,7 +93,7 @@ export async function init_chat_adapter() {
             await load_chat_adapter_from_dir(item)
         }
     } catch (error:any) {
-        chat_adapter_logger("main", String(error.message | error.stack), "error")
+        chat_adapter_logger("main", String(error.message || error.stack || error), "error")
     }
 }
 
