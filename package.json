@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx index.ts"
+    "dev": "tsx index.ts",
+    "production": "tsx laugher.ts"
   },
   "keywords": [],
   "author": "",
@@ -25,8 +26,8 @@
     "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
-    "minecraft-protocol": "github:wupengabc/node-minecraft-protocol",
-    "mineflayer": "github:wupengabc/mineflayer",
+    "minecraft-protocol": "link:C:/Users/25089/Desktop/mineflayer_panel/mineflayer_myself/node-minecraft-protocol",
+    "mineflayer": "link:C:/Users/25089/Desktop/mineflayer_panel/mineflayer_myself/mineflayer",
     "node-napcat-ts": "^0.4.25",
     "openai": "^6.46.0",
     "qq-official-bot": "^1.2.3",
