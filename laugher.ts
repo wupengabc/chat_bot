@@ -4,7 +4,7 @@ import {spawn, type ChildProcess} from "node:child_process"
 import {fileURLToPath} from "node:url"
 
 const root = path.dirname(fileURLToPath(import.meta.url))
-const repository = process.env.UPDATE_REPOSITORY ?? "sg250/chat_bot"
+const repository = process.env.UPDATE_REPOSITORY ?? "wupengabc/chat_bot"
 const branch = process.env.UPDATE_BRANCH ?? "main"
 const interval = Number(process.env.UPDATE_INTERVAL_MS ?? 60_000)
 const statePath = path.join(root, ".laugher-state.json")
@@ -41,17 +41,22 @@ function writeAtomic(filePath: string, content: string | Buffer): void {
     fs.writeFileSync(temporary, content)
     fs.renameSync(temporary, filePath)
 }
-async function gitee<T>(endpoint: string): Promise<T> {
-    const separator = endpoint.includes("?") ? "&" : "?"
-    const token = process.env.GITEE_TOKEN ? `${separator}access_token=${encodeURIComponent(process.env.GITEE_TOKEN)}` : ""
-    const response = await fetch(`https://gitee.com/api/v5/repos/${repository}${endpoint}${token}`)
-    if (!response.ok) throw new Error(`Gitee API ${response.status}: ${await response.text()}`)
+async function github<T>(endpoint: string): Promise<T> {
+    const headers: Record<string, string> = {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "chatbot-laugher"
+    }
+    if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+    const response = await fetch(`https://api.github.com/repos/${repository}${endpoint}`, {headers})
+    if (!response.ok) throw new Error(`GitHub API ${response.status}: ${await response.text()}`)
     return response.json() as Promise<T>
 }
 
 async function download(filePath: string): Promise<Buffer> {
-    const url = `https://gitee.com/${repository}/raw/${encodeURIComponent(branch)}/${filePath.split("/").map(encodeURIComponent).join("/")}`
-    const response = await fetch(url)
+    const headers: Record<string, string> = {"User-Agent": "chatbot-laugher"}
+    if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+    const url = `https://raw.githubusercontent.com/${repository}/${encodeURIComponent(branch)}/${filePath.split("/").map(encodeURIComponent).join("/")}`
+    const response = await fetch(url, {headers})
     if (!response.ok) throw new Error(`下载 ${filePath} 失败: ${response.status}`)
     return Buffer.from(await response.arrayBuffer())
 }
@@ -187,8 +192,8 @@ async function checkForUpdates(initial = false): Promise<void> {
     checking = true
     try {
         const state = readState()
-        const branchInfo = await gitee<{commit: {sha: string}}>(`/branches/${encodeURIComponent(branch)}`)
-        const tree = await gitee<{tree: TreeItem[]}>(`/git/trees/${branchInfo.commit.sha}?recursive=1`)
+        const branchInfo = await github<{commit: {sha: string}}>(`/branches/${encodeURIComponent(branch)}`)
+        const tree = await github<{tree: TreeItem[]}>(`/git/trees/${branchInfo.commit.sha}?recursive=1`)
         const wanted = tree.tree.filter(item =>
             item.type === "blob" &&
             item.path !== "laugher.ts" &&
@@ -253,4 +258,4 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"))
 await checkForUpdates(true)
 startApp()
 setInterval(() => void checkForUpdates(), interval)
-console.log(`[laugher] 已启动，每 ${interval / 60_000} 分钟检查 Gitee ${repository}/${branch}`)
+console.log(`[laugher] 已启动，每 ${interval / 60_000} 分钟检查 GitHub ${repository}/${branch}`)
