@@ -1,3 +1,9 @@
 allowBuilds:
   better-sqlite3: true
   esbuild: true
+overrides:
+  "minecraft-data": "github:wupengabc/node-minecraft-data"
+  "minecraft-protocol": "github:wupengabc/node-minecraft-protocol"
+  "mineflayer": "github:wupengabc/mineflayer"
+  "prismarine-chunk": "github:wupengabc/prismarine-chunk"
+  "prismarine-physics": "github:wupengabc/prismarine-physics"
