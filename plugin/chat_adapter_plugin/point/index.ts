@@ -3,6 +3,11 @@ import {help} from "../../type.js"
 import {send_message} from "../../../chat_adapter/index.js"
 import {get_storage} from "../../../storage/index.js"
 import {Structs} from "node-napcat-ts"
+const currentUrl = new URL(import.meta.url)
+const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
+const utilsUrl = new URL("./utils/index.js", import.meta.url)
+utilsUrl.searchParams.set("t", version)
+const {renderPointLogs} = await import(utilsUrl.href)
 
 interface SignReward {
     point: number
@@ -20,7 +25,13 @@ export class init {
         keyword: "point",
         description: "查询、管理积分及每日签到",
         permission: 0,
-        args: ["get | sign [get] | add <game_id> <num> <reason> | delete <game_id> <num> <reason>"],
+        args: [
+            "get(获取我的积分数) [游戏账号(权限等级2可选，用于查询指定玩家)]",
+            "log(获取最新10条积分记录) [游戏账号(权限等级2可选，用于查询指定玩家)]",
+            "sign(每日签到) [get(获取签到积分概率)]",
+            "add(添加积分) <游戏账号(目标玩家)> <积分数(添加数量)> <原因(添加原因)>",
+            "delete(删除积分) <游戏账号(目标玩家)> <积分数(删除数量)> <原因(删除原因)>"
+        ],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword
@@ -54,7 +65,7 @@ export class init {
     private handle_command(data: any, args: string[], user_id: string) {
         const action = args[1]?.toLowerCase()
         if (!action) {
-            this.reply(data, "用法: point get | point sign [get] | point add/delete <game_id> <num> <reason>")
+            this.reply(data, "用法：point get(查询积分) / log(查询积分记录) / sign(签到) / add(添加积分) / delete(删除积分)")
             return
         }
 
@@ -65,67 +76,82 @@ export class init {
             return
         }
 
-        if (action === "get") {
-            const game_id = this.get_bound_game_id(permission_storage, user_id)
-            if (!game_id) return this.reply(data, "你暂未绑定游戏id，请先绑定")
-            const result = point_storage.get_point_balance(game_id)
+        if (action === "get" || action === "log") {
+            if (args.length > 3) return this.reply(data, `用法：point ${action} [游戏账号]`)
+            const operator_game_id = this.get_bound_game_id(permission_storage, user_id)
+            if (!operator_game_id) return this.reply(data, "你暂未绑定游戏账号，请先完成绑定")
+            const requested_game_id = args[2]
+            const permission = this.get_permission(point_storage, operator_game_id)
+            if (requested_game_id && permission < 2) {
+                return this.reply(data, "权限不足，只有权限等级 2 的用户可以查询其他玩家")
+            }
+            const game_id = requested_game_id || operator_game_id
+            if (!/^[a-zA-Z0-9_]{3,16}$/.test(game_id)) return this.reply(data, "游戏账号格式无效")
+
+            if (action === "get") {
+                const result = point_storage.get_point_balance(game_id)
+                if (!result.success) return this.reply(data, result.message)
+                return this.reply(data, `玩家 ${result.game_id} 当前拥有 ${this.format_point(result.point)} 积分`)
+            }
+
+            const result = point_storage.get_point_logs(game_id, 10)
             if (!result.success) return this.reply(data, result.message)
-            return this.reply(data, `玩家 ${result.game_id} 当前拥有 ${this.format_point(result.point)} point`)
+            const image = renderPointLogs(result.game_id, result.logs)
+            return this.reply_image(data, image)
         }
 
         if (action === "sign") {
             if (args[2]?.toLowerCase() === "get") return this.reply(data, this.format_probability_table())
-            if (args.length > 2) return this.reply(data, "用法: point sign 或 point sign get")
+            if (args.length > 2) return this.reply(data, "用法：point sign(每日签到) 或 point sign get(获取签到积分概率)")
             const game_id = this.get_bound_game_id(permission_storage, user_id)
-            if (!game_id) return this.reply(data, "你暂未绑定游戏id，请先绑定")
+            if (!game_id) return this.reply(data, "你暂未绑定游戏账号，请先完成绑定")
             const reward = this.draw_reward()
             const result = point_storage.sign_point(game_id, reward, this.get_shanghai_date())
             if (!result.success) return this.reply(data, result.message)
-            return this.reply(data, `签到成功，获得 ${this.format_point(result.reward_point)} point\n当前余额：${this.format_point(result.point)} point`)
+            return this.reply(data, `签到成功，获得 ${this.format_point(result.reward_point)} 积分\n当前余额：${this.format_point(result.point)} 积分`)
         }
 
         if (action !== "add" && action !== "delete") {
-            this.reply(data, "未知操作，可用操作: get / sign / add / delete")
+            this.reply(data, "操作无效，可用操作：get(查询积分) / log(查询记录) / sign(签到) / add(添加积分) / delete(删除积分)")
             return
         }
 
         const operator_game_id = this.get_bound_game_id(permission_storage, user_id)
-        if (!operator_game_id) return this.reply(data, "你暂未绑定游戏id，无法执行管理操作")
-        const operator = point_storage.get_user_info(operator_game_id)
-        const permission = operator ? point_storage.user_permission_map[operator.role as keyof typeof point_storage.user_permission_map] : 0
-        if (permission < 2) return this.reply(data, "权限不足，只有 permission 2 用户可以执行该操作")
+        if (!operator_game_id) return this.reply(data, "你暂未绑定游戏账号，无法执行积分管理操作")
+        const permission = this.get_permission(point_storage, operator_game_id)
+        if (permission < 2) return this.reply(data, "权限不足，只有权限等级 2 的用户可以执行该操作")
 
         const game_id = args[2]
         const point_text = args[3]
         const reason = args.slice(4).join(" ").trim()
         if (!game_id || !point_text || !reason) {
-            return this.reply(data, `用法: point ${action} <game_id> <num> <reason>`)
+            return this.reply(data, `用法：point ${action}(积分${action === "add" ? "添加" : "删除"}) <游戏账号> <积分数> <原因>`)
         }
-        if (!/^[a-zA-Z0-9_]{3,16}$/.test(game_id)) return this.reply(data, "无效的 game_id 格式")
-        if (reason.length > 200) return this.reply(data, "reason 最多 200 个字符")
+        if (!/^[a-zA-Z0-9_]{3,16}$/.test(game_id)) return this.reply(data, "游戏账号格式无效")
+        if (reason.length > 200) return this.reply(data, "原因最多允许 200 个字符")
         const point = this.parse_point(point_text)
-        if (point === null) return this.reply(data, "num 必须是大于 0 且最多两位小数的数字")
+        if (point === null) return this.reply(data, "积分数必须大于 0，并且最多保留两位小数")
 
         const result = point_storage.change_point(game_id, action === "add" ? "add" : "remove", point, reason)
         if (!result.success) {
-            const balance = result.point === undefined ? "" : `，当前余额：${this.format_point(result.point)} point`
+            const balance = result.point === undefined ? "" : `，当前余额：${this.format_point(result.point)} 积分`
             return this.reply(data, `${result.message}${balance}`)
         }
-        this.reply(data, `已为 ${result.game_id} ${action === "add" ? "添加" : "删除"} ${this.format_point(result.changed_point)} point\n原因：${reason}\n当前余额：${this.format_point(result.point)} point`)
+        this.reply(data, `已为 ${result.game_id} ${action === "add" ? "添加" : "删除"} ${this.format_point(result.changed_point)} 积分\n原因：${reason}\n当前余额：${this.format_point(result.point)} 积分`)
     }
 
     private validate_sign_rewards() {
         if (!Array.isArray(this.sign_rewards) || this.sign_rewards.length === 0) {
-            throw new Error("sign_rewards 必须是非空数组")
+            throw new Error("签到积分概率配置必须是非空数组")
         }
         const seen = new Set<number>()
         let total = 0
         for (const reward of this.sign_rewards) {
             if (!Number.isFinite(reward.point) || reward.point < 0 || Math.round(reward.point * 100) !== reward.point * 100) {
-                throw new Error("签到 point 必须大于等于 0 且最多两位小数")
+                throw new Error("签到积分必须大于等于 0 且最多保留两位小数")
             }
             if (!Number.isFinite(reward.probability) || reward.probability <= 0 || reward.probability > 1) {
-                throw new Error("签到 probability 必须大于 0 且不超过 1")
+                throw new Error("签到概率必须大于 0 且不超过 1")
             }
             if (seen.has(reward.point)) throw new Error(`签到奖励 ${reward.point} 重复配置`)
             seen.add(reward.point)
@@ -138,6 +164,11 @@ export class init {
 
     private get_bound_game_id(storage: any, user_id: string): string {
         return storage.get_user_info(user_id)?.game_id || ""
+    }
+
+    private get_permission(storage: any, game_id: string): number {
+        const user = storage.get_user_info(game_id)
+        return user ? storage.user_permission_map[user.role as keyof typeof storage.user_permission_map] ?? 0 : 0
     }
 
     private parse_point(value: string): number | null {
@@ -169,13 +200,18 @@ export class init {
 
     private format_probability_table(): string {
         const rows = this.sign_rewards.map(reward =>
-            `${this.format_point(reward.point)} point：${(reward.probability * 100).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")}%`
+            `${this.format_point(reward.point)} 积分：${(reward.probability * 100).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")}%`
         )
         return `每日签到积分概率：\n${rows.join("\n")}\n概率合计：100%`
     }
 
     private format_point(point: number): string {
         return point.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")
+    }
+
+    private reply_image(data: any, image: Buffer) {
+        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+            [Structs.at(data.sender.user_id), Structs.image(image)], data.origin_object)
     }
 
     private reply(data: any, message: string) {

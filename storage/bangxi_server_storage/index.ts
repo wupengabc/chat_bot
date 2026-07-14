@@ -575,6 +575,28 @@ export class init {
         return {success: true as const, game_id: row.username, point: point_minor / 100, point_minor}
     }
 
+    /** 查询积分流水，按最新记录倒序返回。 */
+    get_point_logs(game_id: string, limit: number = 10) {
+        const user = this.database.prepare(
+            "SELECT username FROM user WHERE LOWER(username) = LOWER(?) LIMIT 1"
+        ).get(game_id) as {username: string} | undefined
+        if (!user) return {success: false as const, message: "玩家不存在"}
+
+        const safe_limit = Math.max(1, Math.min(50, Math.floor(limit)))
+        const logs = this.database.prepare(
+            "SELECT id, game_id, action, num, reason, ext, create_at FROM point_log WHERE LOWER(game_id) = LOWER(?) ORDER BY id DESC LIMIT ?"
+        ).all(user.username, safe_limit) as Array<{
+            id: number
+            game_id: string
+            action: "add" | "remove"
+            num: number
+            reason: string
+            ext: string | null
+            create_at: string
+        }>
+        return {success: true as const, game_id: user.username, logs}
+    }
+
     /** 原子修改积分并记录流水；所有修改必须提供理由，删除积分时不允许余额变为负数。 */
     change_point(game_id: string, action: "add" | "remove", point: number, reason: string, ext: string | null = null) {
         const normalized_reason = typeof reason === "string" ? reason.trim() : ""
@@ -582,10 +604,10 @@ export class init {
             return {success: false as const, message: "积分操作类型无效"}
         }
         if (!normalized_reason) {
-            return {success: false as const, message: "积分修改必须提供 reason"}
+            return {success: false as const, message: "修改积分时必须提供原因"}
         }
         if (normalized_reason.length > 200) {
-            return {success: false as const, message: "reason 最多 200 个字符"}
+            return {success: false as const, message: "原因最多允许 200 个字符"}
         }
 
         const point_minor = Math.round(point * 100)
