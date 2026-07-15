@@ -1,14 +1,34 @@
 import fs from "node:fs"
 import path from "node:path"
 import {spawn, type ChildProcess} from "node:child_process"
+import {timingSafeEqual} from "node:crypto"
+import {createServer, type Server} from "node:http"
 import {fileURLToPath} from "node:url"
 
 const root = path.dirname(fileURLToPath(import.meta.url))
-const repository = process.env.UPDATE_REPOSITORY ?? "wupengabc/chat_bot"
-const branch = process.env.UPDATE_BRANCH ?? "main"
-const interval = Number(process.env.UPDATE_INTERVAL_MS ?? 60_000)
+const configPath = path.join(root, "config.json")
+if (!fs.existsSync(configPath)) {
+    throw new Error(`未找到配置文件: ${configPath}`)
+}
+const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    update_repository: string
+    update_branch: string
+    github_token?: string
+    webhook_host: string
+    webhook_port: number
+    webhook_path: string
+    webhook_key: string
+}
+const repository = config.update_repository
+const branch = config.update_branch
+const githubToken = config.github_token ?? ""
+const webhookHost = config.webhook_host
+const webhookPort = Number(config.webhook_port)
+const webhookPath = config.webhook_path
+const webhookKey = config.webhook_key
 const statePath = path.join(root, ".laugher-state.json")
 let app: ChildProcess | null = null
+let webhookServer: Server | null = null
 let checking = false
 let shuttingDown = false
 let restarting = false
@@ -46,7 +66,7 @@ async function github<T>(endpoint: string): Promise<T> {
         Accept: "application/vnd.github+json",
         "User-Agent": "chatbot-laugher"
     }
-    if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+    if (githubToken) headers.Authorization = `Bearer ${githubToken}`
     const response = await fetch(`https://api.github.com/repos/${repository}${endpoint}`, {headers})
     if (!response.ok) throw new Error(`GitHub API ${response.status}: ${await response.text()}`)
     return response.json() as Promise<T>
@@ -54,7 +74,7 @@ async function github<T>(endpoint: string): Promise<T> {
 
 async function download(filePath: string): Promise<Buffer> {
     const headers: Record<string, string> = {"User-Agent": "chatbot-laugher"}
-    if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+    if (githubToken) headers.Authorization = `Bearer ${githubToken}`
     const url = `https://raw.githubusercontent.com/${repository}/${encodeURIComponent(branch)}/${filePath.split("/").map(encodeURIComponent).join("/")}`
     const response = await fetch(url, {headers})
     if (!response.ok) throw new Error(`下载 ${filePath} 失败: ${response.status}`)
@@ -220,7 +240,7 @@ async function checkForUpdates(initial = false): Promise<void> {
         }
 
         writeAtomic(statePath, `${JSON.stringify(state, null, 2)}\n`)
-        console.log(`[laugher] ${initial ? "启动" : "定时"}检查完成，同步 ${changed} 个 TypeScript 文件`)
+        console.log(`[laugher] ${initial ? "启动" : "WebHook"}检查完成，同步 ${changed} 个 TypeScript 文件`)
         if (!initial && changedFiles.length > 0) {
             if (changedFiles.some(file => coreFiles.has(file))) {
                 console.log("[laugher] 核心入口文件已更新，执行完整重启")
@@ -235,6 +255,34 @@ async function checkForUpdates(initial = false): Promise<void> {
         checking = false
     }
 }
+function secureEqual(actual: string, expected: string): boolean {
+    const actualBuffer = Buffer.from(actual)
+    const expectedBuffer = Buffer.from(expected)
+    return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
+}
+
+function startWebhookServer(): void {
+    webhookServer = createServer((request, response) => {
+        const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`)
+        if (request.method !== "POST" || url.pathname !== webhookPath) {
+            response.writeHead(404).end("Not Found")
+            return
+        }
+        if (!secureEqual(url.searchParams.get("key") ?? "", webhookKey)) {
+            response.writeHead(401).end("Unauthorized")
+            return
+        }
+
+        request.resume()
+        response.writeHead(202, {"Content-Type": "application/json"})
+            .end(JSON.stringify({accepted: true, checking}))
+        if (!checking) void checkForUpdates()
+    })
+    webhookServer.listen(webhookPort, webhookHost, () => {
+        console.log(`[laugher] WebHook 已监听 http://${webhookHost}:${webhookPort}${webhookPath}?key=***`)
+    })
+}
+
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
     if (shuttingDown) return
     shuttingDown = true
@@ -244,12 +292,25 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
         restartTimer = null
     }
     console.log(`[laugher] 收到 ${signal}，正在停止`)
+    if (webhookServer) {
+        await new Promise<void>(resolve => webhookServer!.close(() => resolve()))
+        webhookServer = null
+    }
     await stopApp(signal)
     process.exit(0)
 }
 
-if (!Number.isFinite(interval) || interval <= 0) {
-    throw new Error("UPDATE_INTERVAL_MS 必须是大于 0 的毫秒数")
+if (!repository || !branch) {
+    throw new Error("config.json 中的 update_repository 和 update_branch 不能为空")
+}
+if (!Number.isInteger(webhookPort) || webhookPort < 1 || webhookPort > 65535) {
+    throw new Error("WEBHOOK_PORT 必须是 1-65535 之间的整数")
+}
+if (!webhookPath.startsWith("/")) {
+    throw new Error("WEBHOOK_PATH 必须以 / 开头")
+}
+if (!webhookKey) {
+    throw new Error("必须设置 WEBHOOK_KEY")
 }
 
 process.on("SIGINT", () => void shutdown("SIGINT"))
@@ -257,5 +318,5 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"))
 
 await checkForUpdates(true)
 startApp()
-setInterval(() => void checkForUpdates(), interval)
-console.log(`[laugher] 已启动，每 ${interval / 60_000} 分钟检查 GitHub ${repository}/${branch}`)
+startWebhookServer()
+console.log(`[laugher] 已启动，由 WebHook 触发检查 GitHub ${repository}/${branch}`)
