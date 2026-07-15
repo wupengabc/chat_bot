@@ -1,0 +1,5 @@
+{
+  "name": "log",
+  "description": "查询系统运行日志",
+  "configs": [{"name": "default"}]
+}
