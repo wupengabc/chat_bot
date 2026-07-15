@@ -191,6 +191,7 @@ export class init {
             const prices: ParsedPrice[] = []
             const seen_prices = new Set<string>()
             let sign_side_count = 0
+            const sign_samples: string[] = []
             for (const pos of blocks) {
                 try {
                     const sides = bot.blockAt(pos)?.getSignText?.()
@@ -198,6 +199,9 @@ export class init {
                     for (const raw_text of sides) {
                         if (typeof raw_text !== "string" || !raw_text.trim()) continue
                         sign_side_count++
+                        if (sign_samples.length < 8 && /金币|出售|收购|单价|价格/.test(this.clean_sign_text(raw_text))) {
+                            sign_samples.push(JSON.stringify(raw_text))
+                        }
                         const parsed = this.parse_sign(raw_text, reverse, zh)
                         if (!parsed) continue
                         const price_key = `${pos.x},${pos.y},${pos.z}:${parsed.item_id}:${parsed.sell_type}:${parsed.price}`
@@ -208,6 +212,9 @@ export class init {
                 } catch {/* 跳过无法读取的告示牌 */}
             }
             plugin_logger("price", `商店 ${shop_name} 扫描统计：方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}，价格 ${prices.length}`, "info")
+            if (!prices.length && sign_samples.length) {
+                plugin_logger("price", `未解析的商店告示牌样本：${sign_samples.join(" | ")}`, "warn")
+            }
             if (!prices.length) {
                 throw new Error(`没有读取到有效商店价格（方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}）`)
             }
@@ -262,26 +269,39 @@ export class init {
         })
     }
 
+    private clean_sign_text(text: string): string {
+        return text
+            .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+            .replace(/§[0-9A-FK-ORX]/gi, "")
+            .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+            .replace(/[\u00a0\u3000]/g, " ")
+            .replace(/[：﹕︰]/g, ":")
+            .replace(/[，]/g, ",")
+            .replace(/\r/g, "")
+            .trim()
+    }
+
     private parse_sign(text: string, reverse: Record<string, string>, zh: Record<string, string>): Omit<ParsedPrice, "position"> | null {
-        const normalized = text.replace(/§./g, "").replace(/\u00a0/g, " ").replace(/\r/g, "").trim()
+        const normalized = this.clean_sign_text(text)
         const lines = normalized.split("\n").map(line => line.trim()).filter(Boolean)
-        const state_index = lines.findIndex(line => /出售|收购|缺货|空间不足/.test(line))
+        const state_index = lines.findIndex(line => /出售|收购|缺货|空间不足|购买|售卖/.test(line))
         if (state_index < 0) return null
         const state = lines[state_index]
         let sell_type: SellType
-        if (state.includes("缺货") || state.includes("出售")) sell_type = "sell"
-        else if (state.includes("空间不足") || state.includes("收购")) sell_type = "buy"
+        if (/缺货|出售|售卖/.test(state)) sell_type = "sell"
+        else if (/空间不足|收购|购买/.test(state)) sell_type = "buy"
         else return null
 
-        const price_index = lines.findIndex(line => /单价\s*[:：]\s*[\d,.]+\s*金币/.test(line))
-        if (price_index < 0) return null
-        const match = lines[price_index].match(/单价\s*[:：]\s*([\d,.]+)\s*金币/)
-        if (!match) return null
-        const price = Number(match[1].replace(/,/g, ""))
+        const price_match = normalized.match(/(?:单价|价格)?\s*:?\s*([\d,.]+)\s*(?:金币|金|元)/)
+        if (!price_match) return null
+        const price = Number(price_match[1].replace(/,/g, ""))
         if (!Number.isFinite(price) || price <= 0 || Math.abs(price * 100 - Math.round(price * 100)) > 1e-8) return null
 
-        const item_line = lines.slice(state_index + 1, price_index).find(line => !/单价|金币/.test(line))
-            || lines.find((line, index) => index !== state_index && index !== price_index && !/出售|收购|缺货|空间不足/.test(line))
+        const price_index = lines.findIndex(line => line.includes(price_match[0]))
+        const candidates = price_index > state_index
+            ? lines.slice(state_index + 1, price_index)
+            : lines.filter((_, index) => index !== state_index && index !== price_index)
+        const item_line = candidates.find(line => !/(?:单价|价格|金币|出售|收购|缺货|空间不足|购买|售卖)/.test(line) && !/^\d+(?:[,.]\d+)*$/.test(line))
         if (!item_line) return null
         const key = reverse[item_line]
         const item_id = key ? (zh[key] || item_line) : item_line
