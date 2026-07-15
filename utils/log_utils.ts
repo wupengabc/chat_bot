@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events'
 import * as readline from 'node:readline'
 import Database from 'better-sqlite3'
 import {integer, sqliteTable, text} from "drizzle-orm/sqlite-core";
-import {and, count, desc, like} from "drizzle-orm";
+import {and, count, desc, sql} from "drizzle-orm";
 import {drizzle} from 'drizzle-orm/better-sqlite3'
 import {path_utils} from "./path_utils.js";
 
@@ -91,33 +91,43 @@ function ensureDb() {
   `)
 }
 
-interface LogEntry {
+export interface LogEntry {
+  id: number
   time: string
   platform: string
   plugin: string
-  type: string
+  type: LoggerType
   msg: string
 }
 
-type LogFilter = { platform?: string; plugin?: string; type?: string }
+export interface LogFilter {
+  platform?: string
+  plugin?: string
+  type?: LoggerType
+}
 
-function queryLogs(filter: LogFilter, page: number, pageSize: number): [number, LogEntry[]] {
-  ensureDb()
+type LogOrm = ReturnType<typeof drizzle>
+
+function runLogQuery(orm: LogOrm, filter: LogFilter, page: number, pageSize: number): [number, LogEntry[]] {
   const conditions: any[] = []
-  if (filter.platform) {
-    conditions.push(like(log_table.platform, filter.platform))
-  }
-  if (filter.plugin) {
-    conditions.push(like(log_table.plugin, filter.plugin))
-  }
-  if (filter.type) {
-    conditions.push(like(log_table.type, filter.type))
-  }
-  const where_condition = conditions.length > 0 ? and(...conditions) : undefined
+  if (filter.platform) conditions.push(sql`lower(${log_table.platform}) = lower(${filter.platform})`)
+  if (filter.plugin) conditions.push(sql`lower(${log_table.plugin}) = lower(${filter.plugin})`)
+  if (filter.type) conditions.push(sql`lower(${log_table.type}) = lower(${filter.type})`)
+  const whereCondition = conditions.length ? and(...conditions) : undefined
+  const rows = orm.select().from(log_table).where(whereCondition)
+    .orderBy(desc(log_table.id)).limit(pageSize).offset((page - 1) * pageSize).all() as LogEntry[]
+  const total = orm.select({count: count()}).from(log_table).where(whereCondition).get()!.count
+  return [total, rows]
+}
 
-  const rows = _orm!.select().from(log_table).where(where_condition).orderBy(desc(log_table.id)).limit(pageSize).offset((page - 1) * pageSize).all()
-  const totalResult = _orm!.select({count: count()}).from(log_table).where(where_condition).all()
-  return [totalResult[0].count, rows]
+export function create_log_query(database: ReturnType<typeof Database>) {
+  const orm = drizzle(database)
+  return (filter: LogFilter = {}, page = 1, pageSize = 10) => runLogQuery(orm, filter, page, pageSize)
+}
+
+function query_logs(filter: LogFilter = {}, page = 1, page_size = 10): [number, LogEntry[]] {
+  ensureDb()
+  return runLogQuery(_orm!, filter, page, page_size)
 }
 
 function logger(platform: string, plugin: string, msg: string, type: LoggerType = 'info') {
@@ -157,18 +167,18 @@ function logger(platform: string, plugin: string, msg: string, type: LoggerType 
 }
 
 function get_logger_by_platform(platform: string, page: number = 1, page_size: number = 10) {
-  return queryLogs({platform}, page, page_size)
+  return query_logs({platform}, page, page_size)
 }
 
 function get_logger_by_platform_type(platform: string, type: LoggerType, page: number = 1, page_size: number = 10) {
-  return queryLogs({platform, type}, page, page_size)
+  return query_logs({platform, type}, page, page_size)
 }
 function get_logger_by_platform_plugin(platform: string, plugin: string, page: number = 1, page_size: number = 10) {
-  return queryLogs({platform, plugin}, page, page_size)
+  return query_logs({platform, plugin}, page, page_size)
 }
 
 function get_logger_by_platform_plugin_type(platform: string, plugin: string, type: LoggerType, page: number = 1, page_size: number = 10) {
-  return queryLogs({platform, plugin, type}, page, page_size)
+  return query_logs({platform, plugin, type}, page, page_size)
 }
 
 
@@ -184,6 +194,7 @@ export const log_utils = {
   logger,
   logEvents,
   bindReadline,
+  query_logs,
   get_logger_by_platform,
   get_logger_by_platform_type,
   get_logger_by_platform_plugin,

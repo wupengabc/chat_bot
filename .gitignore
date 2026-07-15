@@ -18,6 +18,9 @@ logs/
 
 # Runtime data
 **/data/last_player_list.json
+.superpowers/
+docs/
 
 # TypeScript build output
 dist/
+tests/

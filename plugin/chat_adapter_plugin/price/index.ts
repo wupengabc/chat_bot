@@ -5,6 +5,11 @@ import {get_game_adapter} from "../../../game_adapter/index.js"
 import {get_storage} from "../../../storage/index.js"
 import {acquire_plugin_lock, get_chat_adapter_prefix, plugin_logger, release_plugin_lock} from "../../index.js"
 import {help} from "../../type.js"
+const currentUrl = new URL(import.meta.url)
+const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
+const utilsUrl = new URL("./utils/index.js", import.meta.url)
+utilsUrl.searchParams.set("t", version)
+const {renderPriceAverage} = await import(utilsUrl.href)
 
 type SellType = "sell" | "buy"
 type ParsedPrice = {player: string, item_id: string, sell_type: SellType, price: number, count: string, position: string}
@@ -101,9 +106,14 @@ export class init {
         if (!prices.length) return this.reply(data, `没有找到 ${parsed.item_name} 的${parsed.label}价格`)
         const {valid, outliers} = this.remove_outliers(prices)
         const average = valid.reduce((sum, item) => sum + Number(item.price), 0) / valid.length
-        let message = `${parsed.item_name} 的平均${parsed.label}价格是 ${average.toFixed(2)}\n数据来自: ${valid.map(item => item.shop).join(" ")}`
-        if (outliers.length) message += `\n\n⚠️ 以下商店价格异常，未计入平均值：${outliers.map(item => `\n${item.shop}: ${Number(item.price).toFixed(2)}`).join("")}`
-        this.reply(data, message)
+        const image = renderPriceAverage({
+            itemName: parsed.item_name,
+            label: parsed.label as "出售" | "收购",
+            average,
+            validShops: valid.map(item => item.shop),
+            outliers: outliers.map(item => ({shop: item.shop, price: Number(item.price)})),
+        })
+        this.reply_image(data, image)
     }
 
     private show_prices(data: any, args: string[], storage: any) {
@@ -502,6 +512,11 @@ export class init {
     private get_permission(storage: any, game_id: string): number {
         const user = storage.get_user_info(game_id)
         return user ? storage.user_permission_map[user.role] ?? 0 : 0
+    }
+
+    private reply_image(data: any, image: Buffer) {
+        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+            [Structs.at(data.sender.user_id), Structs.image(image)], data.origin_object)
     }
 
     private reply(data: any, message: string) {
