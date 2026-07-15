@@ -194,22 +194,24 @@ export class init {
             const prices: ParsedPrice[] = []
             const seen_prices = new Set<string>()
             let sign_side_count = 0
-            const sign_samples: string[] = []
-            const representative_samples: string[] = []
+            let printed_sign_count = 0
             for (const pos of blocks) {
                 try {
-                    const sides = bot.blockAt(pos)?.getSignText?.()
+                    const block = bot.blockAt(pos)
+                    const sides = block?.getSignText?.()
                     if (!Array.isArray(sides)) continue
-                    for (const raw_text of sides) {
+                    for (let side_index = 0; side_index < sides.length; side_index++) {
+                        const raw_text = sides[side_index]
                         if (typeof raw_text !== "string" || !raw_text.trim()) continue
                         sign_side_count++
                         const cleaned_text = this.clean_sign_text(raw_text)
-                        const line_count = cleaned_text.split("\n").filter(line => line.trim()).length
-                        if (representative_samples.length < 12 && line_count >= 3) {
-                            representative_samples.push(`${pos.x},${pos.y},${pos.z}=${JSON.stringify(raw_text)}`)
-                        }
-                        if (sign_samples.length < 8 && /金币|出售|收购|单价|价格/.test(cleaned_text)) {
-                            sign_samples.push(`${pos.x},${pos.y},${pos.z}=${JSON.stringify(raw_text)}`)
+                        if (printed_sign_count < 10) {
+                            printed_sign_count++
+                            const lines = cleaned_text.split("\n")
+                            plugin_logger("price", `告示牌 ${printed_sign_count}/10：坐标=${pos.x},${pos.y},${pos.z} 方块=${block?.name || "unknown"} 面=${side_index === 0 ? "正面" : "背面"} 行数=${lines.length}`, "info")
+                            lines.forEach((line, line_index) => {
+                                plugin_logger("price", `告示牌 ${printed_sign_count}/10 第${line_index + 1}行：${JSON.stringify(line)}`, "info")
+                            })
                         }
                         const parsed = this.parse_sign(raw_text, reverse, zh)
                         if (!parsed) continue
@@ -221,10 +223,6 @@ export class init {
                 } catch {/* 跳过无法读取的告示牌 */}
             }
             plugin_logger("price", `商店 ${shop_name} 扫描统计：方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}，价格 ${prices.length}`, "info")
-            if (!prices.length) {
-                const samples = sign_samples.length ? sign_samples : representative_samples
-                if (samples.length) plugin_logger("price", `未解析的告示牌样本：${samples.join(" | ")}`, "warn")
-            }
             if (!prices.length) {
                 throw new Error(`没有读取到有效商店价格（方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}）`)
             }
