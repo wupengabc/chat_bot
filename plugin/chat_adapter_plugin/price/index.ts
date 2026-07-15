@@ -198,8 +198,8 @@ export class init {
             for (const pos of blocks) {
                 try {
                     const block = bot.blockAt(pos)
-                    const sides = block?.getSignText?.()
-                    if (!Array.isArray(sides)) continue
+                    const sides = this.get_sign_sides(block)
+                    if (!sides.length) continue
                     for (let side_index = 0; side_index < sides.length; side_index++) {
                         const raw_text = sides[side_index]
                         if (typeof raw_text !== "string" || !raw_text.trim()) continue
@@ -287,6 +287,38 @@ export class init {
             if (signal.aborted) return on_abort()
             signal.addEventListener("abort", on_abort, {once: true})
         })
+    }
+
+    private get_sign_sides(block: any): string[] {
+        const sides = block?.getSignText?.()
+        if (!Array.isArray(sides)) return []
+        return sides.map(side => {
+            if (typeof side === "string" && !side.includes("[object Object]")) return side
+            const side_name = sides.indexOf(side) === 0 ? "front_text" : "back_text"
+            const messages = block?.entity?.value?.[side_name]?.value?.messages?.value?.value
+            if (!Array.isArray(messages)) return typeof side === "string" ? side : ""
+            return messages.map((message: any) => this.extract_chat_text(message)).join("\n")
+        })
+    }
+
+    private extract_chat_text(value: any): string {
+        if (value === null || value === undefined) return ""
+        if (typeof value === "string") {
+            const trimmed = value.trim()
+            if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+                try { return this.extract_chat_text(JSON.parse(trimmed)) } catch { return value }
+            }
+            return value
+        }
+        if (Array.isArray(value)) return value.map(item => this.extract_chat_text(item)).join("")
+        if (typeof value === "object") {
+            const own_text = typeof value.text === "string" ? value.text : ""
+            const translated = typeof value.translate === "string" ? value.translate : ""
+            const with_text = Array.isArray(value.with) ? value.with.map((item: any) => this.extract_chat_text(item)).join("") : ""
+            const extra = Array.isArray(value.extra) ? value.extra.map((item: any) => this.extract_chat_text(item)).join("") : ""
+            return own_text + (own_text ? "" : translated) + with_text + extra
+        }
+        return String(value)
     }
 
     private clean_sign_text(text: string): string {
