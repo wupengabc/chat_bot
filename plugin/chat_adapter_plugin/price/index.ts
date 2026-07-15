@@ -88,6 +88,7 @@ export class init {
                 plugin_logger("price", `商店 ${shop_name} 更新完成，出售 ${sell_count} 条，收购 ${buy_count} 条，共写入 ${prices.length} 条；已扣除100积分`, "info")
             } finally {
                 clearTimeout(task_timeout)
+                await this.return_home(instance.bot)
             }
         }, false)
         if (!accepted && !task_started) this.reply(data, "已有商店价格更新任务正在运行，请稍后再试")
@@ -228,8 +229,33 @@ export class init {
             if (message_listener) bot.off("messagestr", message_listener)
             if (end_listener) bot.off("end", end_listener)
             if (abort_listener) signal.removeEventListener("abort", abort_listener)
-            if (instance.status === "running") bot.chat("/home home")
         }
+    }
+
+    private async return_home(bot: any) {
+        if (!bot) return
+        await new Promise<void>((resolve) => {
+            let settled = false
+            let home_message_listener: ((message: string) => void) | undefined
+            let home_end_listener: ((reason: string) => void) | undefined
+            const finish = () => {
+                if (settled) return
+                settled = true
+                clearTimeout(timeout)
+                if (home_message_listener) bot.off("messagestr", home_message_listener)
+                if (home_end_listener) bot.off("end", home_end_listener)
+                resolve()
+            }
+            const timeout = setTimeout(finish, 15_000)
+            home_message_listener = (message: string) => {
+                if (message.includes("你将在") && message.includes("秒后被传送")) return
+                if (message.includes("已将你传送") || message.includes("回到家") || message.includes("欢迎回家")) finish()
+            }
+            home_end_listener = () => finish()
+            bot.on("messagestr", home_message_listener)
+            bot.once("end", home_end_listener)
+            try { bot.chat("/home home") } catch { finish() }
+        })
     }
 
     private async wait_for_sign_texts(bot: any, signal: AbortSignal) {
