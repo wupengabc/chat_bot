@@ -126,6 +126,7 @@ export class init {
         let end_listener: ((reason: string) => void) | undefined
         let abort_listener: (() => void) | undefined
         try {
+            const before_teleport = bot.entity?.position?.clone?.()
             await new Promise<void>((resolve, reject) => {
                 let settled = false
                 const finish = (error?: Error) => {
@@ -150,10 +151,12 @@ export class init {
                 bot.once("end", end_listener)
                 bot.chat(`/pw ${shop_name}`)
             })
+            await this.wait_for_position_change(bot, before_teleport, signal)
             await this.wait_for_chunks(bot, signal)
             if (signal.aborted) throw new Error("更新商店价格超时")
             const position = bot.entity?.position
             if (!position) throw new Error("未获取到Bot位置")
+            plugin_logger("price", `商店 ${shop_name} 扫描中心：${position.x.toFixed(1)} ${position.y.toFixed(1)} ${position.z.toFixed(1)}`, "info")
             const blocks: any[] = []
             const seen_positions = new Set<string>()
             let block_entity_count = 0
@@ -192,6 +195,7 @@ export class init {
             const seen_prices = new Set<string>()
             let sign_side_count = 0
             const sign_samples: string[] = []
+            const representative_samples: string[] = []
             for (const pos of blocks) {
                 try {
                     const sides = bot.blockAt(pos)?.getSignText?.()
@@ -199,8 +203,13 @@ export class init {
                     for (const raw_text of sides) {
                         if (typeof raw_text !== "string" || !raw_text.trim()) continue
                         sign_side_count++
-                        if (sign_samples.length < 8 && /金币|出售|收购|单价|价格/.test(this.clean_sign_text(raw_text))) {
-                            sign_samples.push(JSON.stringify(raw_text))
+                        const cleaned_text = this.clean_sign_text(raw_text)
+                        const line_count = cleaned_text.split("\n").filter(line => line.trim()).length
+                        if (representative_samples.length < 12 && line_count >= 3) {
+                            representative_samples.push(`${pos.x},${pos.y},${pos.z}=${JSON.stringify(raw_text)}`)
+                        }
+                        if (sign_samples.length < 8 && /金币|出售|收购|单价|价格/.test(cleaned_text)) {
+                            sign_samples.push(`${pos.x},${pos.y},${pos.z}=${JSON.stringify(raw_text)}`)
                         }
                         const parsed = this.parse_sign(raw_text, reverse, zh)
                         if (!parsed) continue
@@ -212,8 +221,9 @@ export class init {
                 } catch {/* 跳过无法读取的告示牌 */}
             }
             plugin_logger("price", `商店 ${shop_name} 扫描统计：方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}，价格 ${prices.length}`, "info")
-            if (!prices.length && sign_samples.length) {
-                plugin_logger("price", `未解析的商店告示牌样本：${sign_samples.join(" | ")}`, "warn")
+            if (!prices.length) {
+                const samples = sign_samples.length ? sign_samples : representative_samples
+                if (samples.length) plugin_logger("price", `未解析的告示牌样本：${samples.join(" | ")}`, "warn")
             }
             if (!prices.length) {
                 throw new Error(`没有读取到有效商店价格（方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}）`)
@@ -225,6 +235,18 @@ export class init {
             if (abort_listener) signal.removeEventListener("abort", abort_listener)
             if (instance.status === "running") bot.chat("/home home")
         }
+    }
+
+    private async wait_for_position_change(bot: any, before: any, signal: AbortSignal) {
+        if (!before) return
+        const deadline = Date.now() + 5_000
+        while (Date.now() < deadline) {
+            if (signal.aborted) throw new Error("更新商店价格超时")
+            const current = bot.entity?.position
+            if (current && (Math.abs(current.x - before.x) > 1 || Math.abs(current.y - before.y) > 1 || Math.abs(current.z - before.z) > 1)) return
+            await this.abortable_delay(100, signal)
+        }
+        // 某些服务器会把玩家传送回相同坐标；继续扫描，但保留短暂加载时间。
     }
 
     private async wait_for_chunks(bot: any, signal: AbortSignal) {
