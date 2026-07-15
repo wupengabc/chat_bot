@@ -1,7 +1,7 @@
 {
   "update_repository": "wupengabc/chat_bot",
   "update_branch": "main",
-  "github_token": "",
+  "gitee_token": "",
   "webhook_host": "0.0.0.0",
   "webhook_port": 8787,
   "webhook_path": "/webhook",
