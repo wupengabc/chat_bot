@@ -155,6 +155,8 @@ export class init {
             const position = bot.entity?.position
             if (!position) throw new Error("未获取到Bot位置")
             const blocks: any[] = []
+            const seen_positions = new Set<string>()
+            let block_entity_count = 0
             const radius = 128
             const chunk_radius = Math.ceil(radius / 16)
             const center_x = Math.floor(position.x / 16)
@@ -164,12 +166,22 @@ export class init {
                     const column = bot.world.getColumn(cx, cz)
                     if (!column?.blockEntities) continue
                     for (const key of Object.keys(column.blockEntities)) {
-                        const [lx, ly, lz] = key.split(",").map(Number)
-                        const pos = position.offset(cx * 16 + lx - position.x, ly - position.y, cz * 16 + lz - position.z)
-                        const dx = pos.x - position.x, dz = pos.z - position.z
+                        block_entity_count++
+                        const [raw_x, y, raw_z] = key.split(",").map(Number)
+                        if (![raw_x, y, raw_z].every(Number.isFinite)) continue
+                        // prismarine-chunk 使用区块内坐标；同时兼容部分协议实现返回世界坐标。
+                        const world_x = raw_x >= 0 && raw_x < 16 ? cx * 16 + raw_x : raw_x
+                        const world_z = raw_z >= 0 && raw_z < 16 ? cz * 16 + raw_z : raw_z
+                        const dx = world_x - position.x, dz = world_z - position.z
                         if (dx * dx + dz * dz > radius * radius) continue
+                        const pos = position.offset(world_x - position.x, y - position.y, world_z - position.z)
                         const block = bot.blockAt(pos)
-                        if (block?.name?.endsWith("_sign")) blocks.push(pos)
+                        if (typeof block?.getSignText !== "function" && !block?.name?.includes("sign")) continue
+                        const position_key = `${world_x},${y},${world_z}`
+                        if (!seen_positions.has(position_key)) {
+                            seen_positions.add(position_key)
+                            blocks.push(pos)
+                        }
                     }
                 }
             }
@@ -177,15 +189,28 @@ export class init {
             const zh = instance.get_language("zh_cn") as Record<string, string>
             const reverse = Object.fromEntries(Object.entries(en).map(([key, value]) => [value, key]))
             const prices: ParsedPrice[] = []
+            const seen_prices = new Set<string>()
+            let sign_side_count = 0
             for (const pos of blocks) {
                 try {
-                    const text = bot.blockAt(pos)?.getSignText()?.[0]
-                    if (!text || !text.endsWith("金币")) continue
-                    const parsed = this.parse_sign(text, reverse, zh)
-                    if (parsed) prices.push({...parsed, position: `${pos.x} ${pos.y} ${pos.z}`})
+                    const sides = bot.blockAt(pos)?.getSignText?.()
+                    if (!Array.isArray(sides)) continue
+                    for (const raw_text of sides) {
+                        if (typeof raw_text !== "string" || !raw_text.trim()) continue
+                        sign_side_count++
+                        const parsed = this.parse_sign(raw_text, reverse, zh)
+                        if (!parsed) continue
+                        const price_key = `${pos.x},${pos.y},${pos.z}:${parsed.item_id}:${parsed.sell_type}:${parsed.price}`
+                        if (seen_prices.has(price_key)) continue
+                        seen_prices.add(price_key)
+                        prices.push({...parsed, position: `${pos.x} ${pos.y} ${pos.z}`})
+                    }
                 } catch {/* 跳过无法读取的告示牌 */}
             }
-            if (!prices.length) throw new Error("没有读取到有效商店价格")
+            plugin_logger("price", `商店 ${shop_name} 扫描统计：方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}，价格 ${prices.length}`, "info")
+            if (!prices.length) {
+                throw new Error(`没有读取到有效商店价格（方块实体 ${block_entity_count}，告示牌 ${blocks.length}，有效告示牌面 ${sign_side_count}）`)
+            }
             return prices
         } finally {
             if (message_listener) bot.off("messagestr", message_listener)
@@ -238,18 +263,28 @@ export class init {
     }
 
     private parse_sign(text: string, reverse: Record<string, string>, zh: Record<string, string>): Omit<ParsedPrice, "position"> | null {
-        const lines = text.split(/\r?\n/).map(line => line.trim())
-        if (lines.length < 4) return null
-        const state = lines[1]
-        const sell_type: SellType = state.includes("缺货") || state.split(/\s+/)[0] === "出售" ? "sell" : state.includes("空间不足") || state.split(/\s+/)[0] === "收购" ? "buy" : null as any
-        if (!sell_type) return null
-        const match = lines[3].match(/单价：\s*([\d,.]+)\s*金币/)
+        const normalized = text.replace(/§./g, "").replace(/\u00a0/g, " ").replace(/\r/g, "").trim()
+        const lines = normalized.split("\n").map(line => line.trim()).filter(Boolean)
+        const state_index = lines.findIndex(line => /出售|收购|缺货|空间不足/.test(line))
+        if (state_index < 0) return null
+        const state = lines[state_index]
+        let sell_type: SellType
+        if (state.includes("缺货") || state.includes("出售")) sell_type = "sell"
+        else if (state.includes("空间不足") || state.includes("收购")) sell_type = "buy"
+        else return null
+
+        const price_index = lines.findIndex(line => /单价\s*[:：]\s*[\d,.]+\s*金币/.test(line))
+        if (price_index < 0) return null
+        const match = lines[price_index].match(/单价\s*[:：]\s*([\d,.]+)\s*金币/)
         if (!match) return null
         const price = Number(match[1].replace(/,/g, ""))
-        if (!Number.isFinite(price) || price <= 0 || Math.round(price * 100) !== price * 100) return null
-        const original = lines[2]
-        const key = reverse[original]
-        const item_id = key ? (zh[key] || original) : original
+        if (!Number.isFinite(price) || price <= 0 || Math.abs(price * 100 - Math.round(price * 100)) > 1e-8) return null
+
+        const item_line = lines.slice(state_index + 1, price_index).find(line => !/单价|金币/.test(line))
+            || lines.find((line, index) => index !== state_index && index !== price_index && !/出售|收购|缺货|空间不足/.test(line))
+        if (!item_line) return null
+        const key = reverse[item_line]
+        const item_id = key ? (zh[key] || item_line) : item_line
         let count = state.split(/\s+/)[1] || "未知数量"
         if (state.includes("缺货")) count = "已售空"
         if (state.includes("空间不足")) count = "收购已满"
