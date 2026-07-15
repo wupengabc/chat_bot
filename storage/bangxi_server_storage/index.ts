@@ -738,22 +738,49 @@ export class init {
         return {success: true as const, shop_name: normalized_shop, batch_id, inserted: rows.length}
     }
 
-    /** 每家商店只返回其最近一次快照中的当前价格。 */
+    /** 每家商店只返回其最近一次快照中的当前价格；若同店同批次同物品有多个价格，先在店内做一次异常值剔除后取均价。 */
     get_current_shop_prices(item_id: string, sell_type: "sell" | "buy") {
         const item = item_id.trim()
         if (!item || !["sell", "buy"].includes(sell_type)) return []
-        const rows = this.database.prepare(`
-            SELECT p.shop_name AS shop, p.player, p.price, p.count, p.position, p.create_at
-            FROM shop_price p
-            JOIN (
-                SELECT LOWER(shop_name) AS shop_key, MAX(id) AS last_id
-                FROM shop_price
-                GROUP BY LOWER(shop_name)
-            ) latest_shop ON latest_shop.last_id = p.id
-            WHERE LOWER(p.item_id) = LOWER(?) AND p.sell_type = ?
-            ORDER BY p.price ASC
-        `).all(item, sell_type) as Array<{shop: string, player: string | null, price: number, count: string | null, position: string | null, create_at: string}>
-        return rows.map(row => ({...row, price: row.price / 100}))
+        const latest_batches = this.database.prepare(`
+            SELECT LOWER(shop_name) AS shop_key, batch_id, MAX(id) AS last_id
+            FROM shop_price
+            GROUP BY LOWER(shop_name)
+        `).all() as Array<{shop_key: string, batch_id: string, last_id: number}>
+        if (!latest_batches.length) return []
+
+        const select_rows = this.database.prepare(`
+            SELECT shop_name AS shop, player, price, count, position, create_at
+            FROM shop_price
+            WHERE batch_id = ? AND LOWER(item_id) = LOWER(?) AND sell_type = ?
+            ORDER BY id ASC
+        `)
+
+        const result = latest_batches.flatMap(batch => {
+            const rows = select_rows.all(batch.batch_id, item, sell_type) as Array<{shop: string, player: string | null, price: number, count: string | null, position: string | null, create_at: string}>
+            if (!rows.length) return []
+            const prices = rows.map(row => row.price)
+            const filtered_prices = prices.length > 5 ? this.remove_price_outliers(prices) : prices
+            const filtered_set = new Set(filtered_prices)
+            const filtered_rows = rows.filter(row => filtered_set.has(row.price))
+            const average_price = filtered_rows.reduce((sum, row) => sum + row.price, 0) / filtered_rows.length
+            const base = filtered_rows[0] || rows[0]
+            return [{...base, price: average_price / 100}]
+        })
+
+        return result.sort((a, b) => a.price - b.price)
+    }
+
+    private remove_price_outliers(prices: number[]) {
+        if (prices.length <= 5) return prices
+        const sorted = [...prices].sort((a, b) => a - b)
+        const q1 = sorted[Math.floor(sorted.length * 0.25)]
+        const q3 = sorted[Math.floor(sorted.length * 0.75)]
+        const iqr = q3 - q1
+        const lower = q1 - 1.5 * iqr
+        const upper = q3 + 1.5 * iqr
+        const filtered = prices.filter(price => price >= lower && price <= upper)
+        return filtered.length ? filtered : prices
     }
 
     delete_shop_price_batch(batch_id: string) {
