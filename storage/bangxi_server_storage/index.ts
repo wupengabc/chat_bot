@@ -152,6 +152,7 @@ const shop_price_table = sqliteTable("shop_price", {
     id: integer("id").primaryKey({autoIncrement: true}),
     item_id: text("item_id").notNull(),
     shop_name: text("shop_name").notNull(),
+    player: text("player"),
     sell_type: text("sell_type").notNull(),
     count: text("count"),
     position: text("position"),
@@ -237,6 +238,7 @@ export class init {
     private migrate_shop_price_table() {
         const columns = new Set((this.database.prepare("PRAGMA table_info(shop_price)").all() as Array<{name: string}>).map(column => column.name))
         if (!columns.has("sell_type")) this.database.exec("ALTER TABLE shop_price ADD COLUMN sell_type TEXT NOT NULL DEFAULT 'sell'")
+        if (!columns.has("player")) this.database.exec("ALTER TABLE shop_price ADD COLUMN player TEXT")
         if (!columns.has("count")) this.database.exec("ALTER TABLE shop_price ADD COLUMN count TEXT")
         if (!columns.has("position")) this.database.exec("ALTER TABLE shop_price ADD COLUMN position TEXT")
         if (!columns.has("batch_id")) this.database.exec("ALTER TABLE shop_price ADD COLUMN batch_id TEXT NOT NULL DEFAULT 'legacy'")
@@ -711,13 +713,13 @@ export class init {
     }
 
     /** 追加一次完整商店快照。price 使用金币单位，对外允许最多两位小数。 */
-    add_shop_price_snapshot(shop_name: string, prices: Array<{item_id: string, sell_type: "sell" | "buy", price: number, count?: string, position?: string}>) {
+    add_shop_price_snapshot(shop_name: string, prices: Array<{item_id: string, player?: string, sell_type: "sell" | "buy", price: number, count?: string, position?: string}>) {
         const normalized_shop = shop_name.trim()
         if (!normalized_shop || normalized_shop.length > 64) return {success: false as const, message: "商店名称无效"}
         if (!Array.isArray(prices) || prices.length === 0) return {success: false as const, message: "没有读取到有效价格"}
 
         const rows = prices.map(item => ({
-            item_id: item.item_id.trim(), sell_type: item.sell_type,
+            item_id: item.item_id.trim(), player: item.player?.trim() || null, sell_type: item.sell_type,
             price: Math.round(item.price * 100), count: item.count?.trim() || null,
             position: item.position?.trim() || null
         }))
@@ -729,9 +731,9 @@ export class init {
         const create_at = new Date().toISOString()
         this.database.transaction(() => {
             const insert = this.database.prepare(
-                "INSERT INTO shop_price (item_id, shop_name, sell_type, count, position, batch_id, create_at, price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO shop_price (item_id, shop_name, player, sell_type, count, position, batch_id, create_at, price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
-            for (const row of rows) insert.run(row.item_id, normalized_shop, row.sell_type, row.count, row.position, batch_id, create_at, row.price)
+            for (const row of rows) insert.run(row.item_id, normalized_shop, row.player, row.sell_type, row.count, row.position, batch_id, create_at, row.price)
         })()
         return {success: true as const, shop_name: normalized_shop, batch_id, inserted: rows.length}
     }
@@ -741,7 +743,7 @@ export class init {
         const item = item_id.trim()
         if (!item || !["sell", "buy"].includes(sell_type)) return []
         const rows = this.database.prepare(`
-            SELECT p.shop_name AS shop, p.price, p.count, p.position, p.create_at
+            SELECT p.shop_name AS shop, p.player, p.price, p.count, p.position, p.create_at
             FROM shop_price p
             JOIN (
                 SELECT shop_name, MAX(id) AS last_id FROM shop_price GROUP BY LOWER(shop_name)
@@ -749,7 +751,7 @@ export class init {
             JOIN shop_price latest_row ON latest_row.id = latest_shop.last_id AND latest_row.batch_id = p.batch_id
             WHERE LOWER(p.item_id) = LOWER(?) AND p.sell_type = ?
             ORDER BY p.price ASC
-        `).all(item, sell_type) as Array<{shop: string, price: number, count: string | null, position: string | null, create_at: string}>
+        `).all(item, sell_type) as Array<{shop: string, player: string | null, price: number, count: string | null, position: string | null, create_at: string}>
         return rows.map(row => ({...row, price: row.price / 100}))
     }
 

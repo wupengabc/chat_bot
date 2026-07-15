@@ -1,4 +1,5 @@
 import {Structs} from "node-napcat-ts"
+import ExcelJS from "exceljs"
 import {send_message} from "../../../chat_adapter/index.js"
 import {get_game_adapter} from "../../../game_adapter/index.js"
 import {get_storage} from "../../../storage/index.js"
@@ -6,8 +7,8 @@ import {acquire_plugin_lock, get_chat_adapter_prefix, plugin_logger, release_plu
 import {help} from "../../type.js"
 
 type SellType = "sell" | "buy"
-type ParsedPrice = {item_id: string, sell_type: SellType, price: number, count: string, position: string}
-type PriceRow = {shop: string, price: number, count: string | null, position: string | null, create_at: string}
+type ParsedPrice = {player: string, item_id: string, sell_type: SellType, price: number, count: string, position: string}
+type PriceRow = {shop: string, player: string | null, price: number, count: string | null, position: string | null, create_at: string}
 
 export class init {
     public help: help = {
@@ -68,9 +69,9 @@ export class init {
         const accepted = await instance.execute_single_task(async () => {
             task_started = true
             const controller = new AbortController()
-            const task_timeout = setTimeout(() => controller.abort(), 45_000)
+            const task_timeout = setTimeout(() => controller.abort(), 90_000)
             try {
-                this.reply(data, `正在更新商店 ${shop_name} 的价格，成功后将扣除100积分（最多等待45秒）……`)
+                this.reply(data, `正在更新商店 ${shop_name} 的价格，成功后将扣除100积分（最多等待90秒）……`)
                 const prices = await this.scan_shop(instance, shop_name, controller.signal)
                 if (controller.signal.aborted) throw new Error("更新商店价格超时")
                 const saved = storage.add_shop_price_snapshot(shop_name, prices)
@@ -82,7 +83,9 @@ export class init {
                 }
                 const sell_count = prices.filter(item => item.sell_type === "sell").length
                 const buy_count = prices.length - sell_count
-                this.reply(data, `商店 ${shop_name} 更新完成，出售 ${sell_count} 条，收购 ${buy_count} 条，共写入 ${prices.length} 条；已扣除100积分`)
+                const excel = await this.create_price_excel(shop_name, prices)
+                this.send_file(data, excel, `${this.safe_file_name(shop_name)}_商店价格.xlsx`)
+                plugin_logger("price", `商店 ${shop_name} 更新完成，出售 ${sell_count} 条，收购 ${buy_count} 条，共写入 ${prices.length} 条；已扣除100积分`, "info")
             } finally {
                 clearTimeout(task_timeout)
             }
@@ -108,7 +111,10 @@ export class init {
         const prices = storage.get_current_shop_prices(parsed.item_name, parsed.sell_type) as PriceRow[]
         if (!prices.length) return this.reply(data, `没有找到 ${parsed.item_name} 的${parsed.label}价格`)
         const limit = 50
-        let message = `${parsed.item_name} 的${parsed.label}价格：\n` + prices.slice(0, limit).map(item => `${item.shop}: ${Number(item.price).toFixed(2)}${item.count ? `（${item.count}）` : ""}`).join("\n")
+        let message = `${parsed.item_name} 的${parsed.label}价格：\n` + prices.slice(0, limit).map(item => {
+            const owner = item.player?.trim() ? `【${item.player}】` : ""
+            return `${item.shop}${owner}: ${Number(item.price).toFixed(2)}${item.count ? `（${item.count}）` : ""}`
+        }).join("\n")
         if (prices.length > limit) message += `\n仅显示前${limit}条，共${prices.length}条`
         this.reply(data, message)
     }
@@ -153,6 +159,7 @@ export class init {
             })
             await this.wait_for_position_change(bot, before_teleport, signal)
             await this.wait_for_chunks(bot, signal)
+            await this.wait_for_sign_texts(bot, signal)
             if (signal.aborted) throw new Error("更新商店价格超时")
             const position = bot.entity?.position
             if (!position) throw new Error("未获取到Bot位置")
@@ -194,26 +201,16 @@ export class init {
             const prices: ParsedPrice[] = []
             const seen_prices = new Set<string>()
             let sign_side_count = 0
-            let printed_sign_count = 0
             for (const pos of blocks) {
                 try {
                     const block = bot.blockAt(pos)
                     const sides = this.get_sign_sides(block)
                     if (!sides.length) continue
                     for (let side_index = 0; side_index < sides.length; side_index++) {
-                        const raw_text = sides[side_index]
-                        if (typeof raw_text !== "string" || !raw_text.trim()) continue
-                        sign_side_count++
+                        const raw_text = typeof sides[side_index] === "string" ? sides[side_index] : ""
                         const cleaned_text = this.clean_sign_text(raw_text)
-                        if (printed_sign_count < 10) {
-                            printed_sign_count++
-                            const lines = cleaned_text.split("\n")
-                            plugin_logger("price", `告示牌 ${printed_sign_count}/10：坐标=${pos.x},${pos.y},${pos.z} 方块=${block?.name || "unknown"} 面=${side_index === 0 ? "正面" : "背面"} 行数=${lines.length}`, "info")
-                            lines.forEach((line, line_index) => {
-                                plugin_logger("price", `告示牌 ${printed_sign_count}/10 第${line_index + 1}行：${JSON.stringify(line)}`, "info")
-                            })
-                        }
-                        const parsed = this.parse_sign(raw_text, reverse, zh)
+                        const parsed = cleaned_text ? this.parse_sign(raw_text, reverse, zh) : null
+                        if (cleaned_text) sign_side_count++
                         if (!parsed) continue
                         const price_key = `${pos.x},${pos.y},${pos.z}:${parsed.item_id}:${parsed.sell_type}:${parsed.price}`
                         if (seen_prices.has(price_key)) continue
@@ -233,6 +230,54 @@ export class init {
             if (abort_listener) signal.removeEventListener("abort", abort_listener)
             if (instance.status === "running") bot.chat("/home home")
         }
+    }
+
+    private async wait_for_sign_texts(bot: any, signal: AbortSignal) {
+        const max_wait_ms = 5_000
+        const started_at = Date.now()
+        let best_loaded = -1
+        while (Date.now() - started_at < max_wait_ms) {
+            if (signal.aborted) throw new Error("更新商店价格超时")
+            const {total_sides, loaded_sides} = this.count_sign_sides(bot)
+            if (loaded_sides !== best_loaded) {
+                best_loaded = loaded_sides
+                const ratio = total_sides > 0 ? loaded_sides / total_sides : 0
+                plugin_logger("price", `等待告示牌文本加载：${loaded_sides}/${total_sides} 个面（${(ratio * 100).toFixed(1)}%）`, "info")
+            }
+            await this.abortable_delay(500, signal)
+        }
+        const {total_sides, loaded_sides} = this.count_sign_sides(bot)
+        const ratio = total_sides > 0 ? loaded_sides / total_sides : 0
+        plugin_logger("price", `告示牌文本等待5秒完成：${loaded_sides}/${total_sides} 个面（${(ratio * 100).toFixed(1)}%）`, "info")
+    }
+
+    private count_sign_sides(bot: any): {total_sides: number, loaded_sides: number} {
+        const position = bot.entity?.position
+        if (!position) return {total_sides: 0, loaded_sides: 0}
+        const center_x = Math.floor(position.x / 16)
+        const center_z = Math.floor(position.z / 16)
+        const chunk_radius = 8
+        let total_sides = 0
+        let loaded_sides = 0
+        for (let cx = center_x - chunk_radius; cx <= center_x + chunk_radius; cx++) {
+            for (let cz = center_z - chunk_radius; cz <= center_z + chunk_radius; cz++) {
+                const column = bot.world.getColumn(cx, cz)
+                if (!column?.blockEntities) continue
+                for (const key of Object.keys(column.blockEntities)) {
+                    const [raw_x, y, raw_z] = key.split(",").map(Number)
+                    if (![raw_x, y, raw_z].every(Number.isFinite)) continue
+                    const world_x = raw_x >= 0 && raw_x < 16 ? cx * 16 + raw_x : raw_x
+                    const world_z = raw_z >= 0 && raw_z < 16 ? cz * 16 + raw_z : raw_z
+                    const pos = position.offset(world_x - position.x, y - position.y, world_z - position.z)
+                    const block = bot.blockAt(pos)
+                    if (typeof block?.getSignText !== "function" && !block?.name?.includes("sign")) continue
+                    const sides = this.get_sign_sides(block)
+                    total_sides += Math.max(sides.length, 2)
+                    loaded_sides += sides.filter(text => text.trim()).length
+                }
+            }
+        }
+        return {total_sides, loaded_sides}
     }
 
     private async wait_for_position_change(bot: any, before: any, signal: AbortSignal) {
@@ -289,6 +334,46 @@ export class init {
         })
     }
 
+    private safe_file_name(value: string): string {
+        return value.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").slice(0, 64) || "商店"
+    }
+
+    private async create_price_excel(shop_name: string, prices: ParsedPrice[]): Promise<Buffer> {
+        const workbook = new ExcelJS.Workbook()
+        workbook.creator = "ChatBot price plugin"
+        workbook.created = new Date()
+        const sheet = workbook.addWorksheet("商店数据")
+        sheet.columns = [
+            {header: "商店名称", key: "shop", width: 20},
+            {header: "商店老板", key: "player", width: 20},
+            {header: "商店类型", key: "sell_type", width: 12},
+            {header: "商品数量", key: "count", width: 15},
+            {header: "物品名称", key: "item_id", width: 30},
+            {header: "价格(金币)", key: "price", width: 16},
+            {header: "坐标", key: "position", width: 22}
+        ]
+        sheet.addRows(prices.map(item => ({
+            shop: shop_name,
+            player: item.player,
+            sell_type: item.sell_type === "sell" ? "出售" : "收购",
+            count: item.count,
+            item_id: item.item_id,
+            price: item.price,
+            position: item.position
+        })))
+        sheet.getRow(1).font = {bold: true}
+        sheet.getColumn("price").numFmt = "0.00"
+        sheet.autoFilter = {from: "A1", to: "G1"}
+        sheet.views = [{state: "frozen", ySplit: 1}]
+        const buffer = await workbook.xlsx.writeBuffer()
+        return Buffer.from(buffer)
+    }
+
+    private send_file(data: any, file: Buffer, name: string) {
+        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+            [Structs.file(file, name)], data.origin_object)
+    }
+
     private get_sign_sides(block: any): string[] {
         const sides = block?.getSignText?.()
         if (!Array.isArray(sides)) return []
@@ -303,6 +388,10 @@ export class init {
 
     private extract_chat_text(value: any): string {
         if (value === null || value === undefined) return ""
+        // 兼容 prismarine-nbt 的 {type, value} 包装；告示牌 messages 在当前协议中是 compound 列表。
+        if (typeof value === "object" && !Array.isArray(value) && "type" in value && "value" in value) {
+            return this.extract_chat_text(value.value)
+        }
         if (typeof value === "string") {
             const trimmed = value.trim()
             if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
@@ -312,10 +401,10 @@ export class init {
         }
         if (Array.isArray(value)) return value.map(item => this.extract_chat_text(item)).join("")
         if (typeof value === "object") {
-            const own_text = typeof value.text === "string" ? value.text : ""
-            const translated = typeof value.translate === "string" ? value.translate : ""
-            const with_text = Array.isArray(value.with) ? value.with.map((item: any) => this.extract_chat_text(item)).join("") : ""
-            const extra = Array.isArray(value.extra) ? value.extra.map((item: any) => this.extract_chat_text(item)).join("") : ""
+            const own_text = this.extract_chat_text(value.text)
+            const translated = this.extract_chat_text(value.translate)
+            const with_text = this.extract_chat_text(value.with)
+            const extra = this.extract_chat_text(value.extra)
             return own_text + (own_text ? "" : translated) + with_text + extra
         }
         return String(value)
@@ -356,11 +445,12 @@ export class init {
         const item_line = candidates.find(line => !/(?:单价|价格|金币|出售|收购|缺货|空间不足|购买|售卖)/.test(line) && !/^\d+(?:[,.]\d+)*$/.test(line))
         if (!item_line) return null
         const key = reverse[item_line]
-        const item_id = key ? (zh[key] || item_line) : item_line
+        const item_id = zh[item_line] || (key ? (zh[key] || item_line) : item_line)
         let count = state.split(/\s+/)[1] || "未知数量"
         if (state.includes("缺货")) count = "已售空"
         if (state.includes("空间不足")) count = "收购已满"
-        return {item_id, sell_type, price, count}
+        const player = lines[0] || "未知店主"
+        return {player, item_id, sell_type, price, count}
     }
 
     private parse_item_command(args: string[]): {item_name: string, sell_type: SellType, label: string} | null {
