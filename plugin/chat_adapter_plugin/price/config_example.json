@@ -1,0 +1,9 @@
+{
+  "name": "price",
+  "description": "商店价格查询、统计和更新",
+  "configs": [
+    {
+      "name": "default"
+    }
+  ]
+}
