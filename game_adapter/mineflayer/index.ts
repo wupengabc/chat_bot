@@ -4,6 +4,9 @@ import {LoggerType} from "../../utils/log_utils.js";
 import {MinecraftJsonParser} from "./utils/message_json_parser.js";
 import {event_emitter} from "../../utils/event_emitter.js";
 import mineflayer from "mineflayer";
+import fs from "node:fs";
+import {path_utils} from "../../utils/path_utils.js";
+import path from "node:path";
 
 export class init {
     public event = new event_emitter()
@@ -219,6 +222,13 @@ export class init {
         }
         this.bot.chat(message)
         return true
+    }
+
+    public get_language(lang: string) {
+        if (!fs.existsSync(path.join(path_utils.get_project_root_path(), `/game_adapter/mineflayer/data/language/${lang}/${lang}.json`))) {
+            return {}
+        }
+        return JSON.parse(fs.readFileSync(path.join(path_utils.get_project_root_path(), `/game_adapter/mineflayer/data/language/${lang}/${lang}.json`), "utf-8"))
     }
 
     async execute_single_task(task: () => void | Promise<void>, join_to_queue: boolean = false) :Promise<boolean> {

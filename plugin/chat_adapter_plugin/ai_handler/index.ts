@@ -208,15 +208,21 @@ export class init {
                             .map(command => command.keyword)
                             .join(", ")
 
-                        const prompt = `用户输入了: "${content_to_recognize}"
+                        const prompt = `用户输入了: ${JSON.stringify(content_to_recognize)}
 
 可用的命令列表:
 ${available_commands_with_desc}
 
-请判断用户最可能想要使用的命令关键字和参数。
-返回格式: 命令关键字 参数(如果有)
-例如: "help 1" 或 "message" 或 "baltop"
-只返回修正后的命令和参数，不要有任何其他文字说明。如果无法判断，返回 "help"。
+判断用户是在明确要求立即执行命令，还是只在询问命令的功能、用法、结果、费用、权限或可行性。
+- 只有用户明确要求执行具体操作，且参数足够时，intent 才能是 execute。
+- 包含“怎么、如何、是否、能否、会不会、是什么、多少钱、需要什么权限”等咨询含义时，intent 必须是 consult，不得执行命令。
+- 无法确定时按 consult 处理。
+- consult 时直接回答用户的问题；不要声称已经执行。
+- execute 时 command 必须是可用命令关键字，args 是参数字符串。
+
+只返回单行 JSON，不要 Markdown：
+执行：{"intent":"execute","command":"命令关键字","args":"参数"}
+咨询：{"intent":"consult","answer":"简洁回答；必要时给出可供用户手动发送的完整命令"}
 
 可用命令关键字: ${available_commands}`
                         
@@ -225,23 +231,45 @@ ${available_commands_with_desc}
                             messages: [
                                 {
                                     role: "system",
-                                    content: "你是一个命令修正助手。你只需要返回修正后的命令和参数，不要有任何其他解释或标点符号。"
+                                    content: "你是谨慎的命令意图助手。普通询问绝不能触发命令；只有明确、具体的执行请求才能返回 execute。严格输出指定 JSON。"
                                 },
                                 {
                                     role: "user",
                                     content: prompt
                                 }
                             ],
-                            temperature: 0.2,
-                            max_tokens: 30
+                            temperature: 0.1,
+                            max_tokens: 180
                         })
                         
-                        const corrected_text = completion.choices[0]?.message?.content?.trim() || "help"
-                        const corrected_parts = corrected_text.split(" ")
-                        const corrected_command = corrected_parts[0]
-                        const corrected_args = corrected_parts.slice(1).join(" ")
+                        const result_text = completion.choices[0]?.message?.content?.trim() || ""
+                        let result: {intent?: string, command?: string, args?: string, answer?: string}
+                        try {
+                            result = JSON.parse(result_text)
+                        } catch {
+                            result = {intent: "consult", answer: `无法确定是否需要执行命令，请使用 ${this.chat_adapter_prefix}help 查看用法`}
+                        }
+
+                        if (result.intent !== "execute") {
+                            const answer = typeof result.answer === "string" && result.answer.trim()
+                                ? result.answer.trim()
+                                : `这看起来是在询问命令用法。如需执行，请明确输入完整命令；可使用 ${this.chat_adapter_prefix}help 查看帮助。`
+                            send_message(
+                                data.adapter,
+                                data.instance_name,
+                                data.receiver.type,
+                                data.sender.id,
+                                [Structs.at(data.sender.user_id), Structs.text(`\n${answer}`)],
+                                data.origin_object
+                            )
+                            release_plugin_lock(user_id, 0)
+                            return
+                        }
+
+                        const corrected_command = typeof result.command === "string" ? result.command.trim() : ""
+                        const corrected_args = typeof result.args === "string" ? result.args.trim() : ""
                         
-                        // 验证 AI 返回的命令是否在可用列表中
+                        // 仅明确执行意图且命令有效时才进行分发
                         if (is_dispatchable_correction(corrected_command, this.help.keyword, keywords)) {
                             // 构建修正后的消息
                             const corrected_message = corrected_args

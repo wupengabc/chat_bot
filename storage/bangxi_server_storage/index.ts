@@ -1,6 +1,7 @@
 import {path_utils} from "../../utils/path_utils.js";
 import path from "node:path";
 import fs from "fs";
+import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import {integer, sqliteTable, text} from "drizzle-orm/sqlite-core";
 import {eq, and, sql, desc, SQLWrapper} from "drizzle-orm";
@@ -147,6 +148,18 @@ const point_log_table = sqliteTable("point_log", {
     create_at: text("create_at").notNull(),
 })
 
+const shop_price_table = sqliteTable("shop_price", {
+    id: integer("id").primaryKey({autoIncrement: true}),
+    item_id: text("item_id").notNull(),
+    shop_name: text("shop_name").notNull(),
+    sell_type: text("sell_type").notNull(),
+    count: text("count"),
+    position: text("position"),
+    batch_id: text("batch_id").notNull(),
+    create_at: text("create_at").notNull(),
+    price: integer("price").notNull(),
+})
+
 export class init {
     private database_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "bangxi_server.db")
     private last_player_list_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "last_player_list.json")
@@ -209,9 +222,24 @@ export class init {
         this.database.exec(message_table_init_sql)
         const point_log_table_init_sql = orm_utils.convert_table_to_sqlite_sql(point_log_table)
         this.database.exec(point_log_table_init_sql)
+        const shop_price_table_init_sql = orm_utils.convert_table_to_sqlite_sql(shop_price_table)
+        this.database.exec(shop_price_table_init_sql)
+        this.migrate_shop_price_table()
         this.database.exec("CREATE INDEX IF NOT EXISTS idx_point_log_game_id ON point_log(game_id)")
         this.database.exec("CREATE INDEX IF NOT EXISTS idx_point_log_sign_lookup ON point_log(game_id, ext, create_at)")
+        this.database.exec("CREATE INDEX IF NOT EXISTS idx_shop_price_item_type_shop ON shop_price(item_id, sell_type, shop_name, id)")
+        this.database.exec("CREATE INDEX IF NOT EXISTS idx_shop_price_shop ON shop_price(shop_name, id)")
+        this.database.exec("CREATE INDEX IF NOT EXISTS idx_shop_price_batch ON shop_price(batch_id)")
         this.restore_player_list()
+    }
+
+    /** 为已经存在的 shop_price 表补齐价格快照字段。 */
+    private migrate_shop_price_table() {
+        const columns = new Set((this.database.prepare("PRAGMA table_info(shop_price)").all() as Array<{name: string}>).map(column => column.name))
+        if (!columns.has("sell_type")) this.database.exec("ALTER TABLE shop_price ADD COLUMN sell_type TEXT NOT NULL DEFAULT 'sell'")
+        if (!columns.has("count")) this.database.exec("ALTER TABLE shop_price ADD COLUMN count TEXT")
+        if (!columns.has("position")) this.database.exec("ALTER TABLE shop_price ADD COLUMN position TEXT")
+        if (!columns.has("batch_id")) this.database.exec("ALTER TABLE shop_price ADD COLUMN batch_id TEXT NOT NULL DEFAULT 'legacy'")
     }
 
     /** 从本地文件恢复上次的 player_list，防止重启丢失会话数据 */
@@ -680,6 +708,62 @@ export class init {
                 reward_point: reward_minor / 100
             }
         })()
+    }
+
+    /** 追加一次完整商店快照。price 使用金币单位，对外允许最多两位小数。 */
+    add_shop_price_snapshot(shop_name: string, prices: Array<{item_id: string, sell_type: "sell" | "buy", price: number, count?: string, position?: string}>) {
+        const normalized_shop = shop_name.trim()
+        if (!normalized_shop || normalized_shop.length > 64) return {success: false as const, message: "商店名称无效"}
+        if (!Array.isArray(prices) || prices.length === 0) return {success: false as const, message: "没有读取到有效价格"}
+
+        const rows = prices.map(item => ({
+            item_id: item.item_id.trim(), sell_type: item.sell_type,
+            price: Math.round(item.price * 100), count: item.count?.trim() || null,
+            position: item.position?.trim() || null
+        }))
+        if (rows.some(row => !row.item_id || !["sell", "buy"].includes(row.sell_type) || !Number.isSafeInteger(row.price) || row.price <= 0)) {
+            return {success: false as const, message: "价格快照包含无效数据"}
+        }
+
+        const batch_id = crypto.randomUUID()
+        const create_at = new Date().toISOString()
+        this.database.transaction(() => {
+            const insert = this.database.prepare(
+                "INSERT INTO shop_price (item_id, shop_name, sell_type, count, position, batch_id, create_at, price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            )
+            for (const row of rows) insert.run(row.item_id, normalized_shop, row.sell_type, row.count, row.position, batch_id, create_at, row.price)
+        })()
+        return {success: true as const, shop_name: normalized_shop, batch_id, inserted: rows.length}
+    }
+
+    /** 每家商店只返回其最近一次快照中的当前价格。 */
+    get_current_shop_prices(item_id: string, sell_type: "sell" | "buy") {
+        const item = item_id.trim()
+        if (!item || !["sell", "buy"].includes(sell_type)) return []
+        const rows = this.database.prepare(`
+            SELECT p.shop_name AS shop, p.price, p.count, p.position, p.create_at
+            FROM shop_price p
+            JOIN (
+                SELECT shop_name, MAX(id) AS last_id FROM shop_price GROUP BY LOWER(shop_name)
+            ) latest_shop ON LOWER(latest_shop.shop_name) = LOWER(p.shop_name)
+            JOIN shop_price latest_row ON latest_row.id = latest_shop.last_id AND latest_row.batch_id = p.batch_id
+            WHERE LOWER(p.item_id) = LOWER(?) AND p.sell_type = ?
+            ORDER BY p.price ASC
+        `).all(item, sell_type) as Array<{shop: string, price: number, count: string | null, position: string | null, create_at: string}>
+        return rows.map(row => ({...row, price: row.price / 100}))
+    }
+
+    delete_shop_price_batch(batch_id: string) {
+        return this.database.prepare("DELETE FROM shop_price WHERE batch_id = ?").run(batch_id).changes
+    }
+
+    delete_shop_prices(shop_name: string) {
+        const shop = shop_name.trim()
+        if (!shop) return {success: false as const, message: "商店名称无效"}
+        const result = this.database.prepare("DELETE FROM shop_price WHERE LOWER(shop_name) = LOWER(?)").run(shop)
+        return result.changes > 0
+            ? {success: true as const, deleted: result.changes}
+            : {success: false as const, message: "没有找到该商店的价格记录"}
     }
 
     /** 查询玩家完整信息，不存在则返回 null */
