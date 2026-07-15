@@ -746,9 +746,10 @@ export class init {
             SELECT p.shop_name AS shop, p.player, p.price, p.count, p.position, p.create_at
             FROM shop_price p
             JOIN (
-                SELECT shop_name, MAX(id) AS last_id FROM shop_price GROUP BY LOWER(shop_name)
-            ) latest_shop ON LOWER(latest_shop.shop_name) = LOWER(p.shop_name)
-            JOIN shop_price latest_row ON latest_row.id = latest_shop.last_id AND latest_row.batch_id = p.batch_id
+                SELECT LOWER(shop_name) AS shop_key, MAX(id) AS last_id
+                FROM shop_price
+                GROUP BY LOWER(shop_name)
+            ) latest_shop ON latest_shop.last_id = p.id
             WHERE LOWER(p.item_id) = LOWER(?) AND p.sell_type = ?
             ORDER BY p.price ASC
         `).all(item, sell_type) as Array<{shop: string, player: string | null, price: number, count: string | null, position: string | null, create_at: string}>
