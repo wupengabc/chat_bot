@@ -25,6 +25,21 @@ export function contains_sensitive_content(content: string): boolean {
     return SENSITIVE_PATTERNS.some(pattern => pattern.test(content))
 }
 
+function get_safe_search_urls(markdown: string): string[] {
+    const urls = new Set<string>()
+    for (const match of markdown.matchAll(/\]\((https?:\/\/[^\s)]+)\)/g)) {
+        try {
+            const url = new URL(match[1])
+            if (!url.hostname.endsWith("bing.com") && !contains_sensitive_content(url.href)) {
+                urls.add(url.href)
+            }
+        } catch {
+            // 忽略格式不正确的搜索结果链接
+        }
+    }
+    return [...urls].slice(0, 3)
+}
+
 export function is_dispatchable_correction(command: string, handler_command: string, commands: string[]): boolean {
     return command !== handler_command && commands.includes(command)
 }
@@ -280,7 +295,7 @@ ${available_commands_with_desc}
 - 只有用户明确要求执行具体操作，且参数足够时，intent 才能是 execute。
 - 包含“怎么、如何、是否、能否、会不会、是什么、多少钱、需要什么权限”等咨询含义时，intent 必须是 consult，不得执行命令。
 - 无法确定时按 consult 处理。
-- consult 时直接回答用户的问题；不要声称已经执行。对于已提供的“联网搜索结果”，必须基于结果回答；若搜索摘要的信息不足、互相矛盾或需要核实细节，可从其中的安全链接调用 fetch_markdown 访问具体网页后再回答。不要自行列出网址，系统会附上已使用且安全的网址。
+- consult 时直接回答用户的问题；不要声称已经执行。对于已提供的“联网搜索结果”，必须基于结果回答。涉及游戏机制、物品获取、配方、掉落、版本差异等可验证事实时，必须先调用 fetch_markdown 交叉核实至少两个搜索结果中的安全具体网页；若可靠网页不足两个，必须明确说明无法充分核实，不得猜测。不要自行列出网址，系统会附上已使用且安全的网址。
 - execute 时 command 必须是可用命令关键字，args 是参数字符串。
 
 只返回单行 JSON，不要 Markdown：
@@ -292,11 +307,23 @@ ${available_commands_with_desc}
                         const chat_history = this.get_chat_messages(data)
                         const usedUrls: string[] = []
                         let searchContext = ""
+                        let verificationContext = ""
                         try {
                             const searchUrl = new URL("https://www.bing.com/search")
                             searchUrl.searchParams.set("q", content_to_recognize)
                             usedUrls.push(searchUrl.href)
                             searchContext = (await searchMarkdown(content_to_recognize)).slice(0, 12000)
+                            const verificationUrls = get_safe_search_urls(searchContext)
+                            const verifiedPages = await Promise.all(verificationUrls.map(async url => {
+                                try {
+                                    const markdown = await fetchMarkdown(url)
+                                    usedUrls.push(url)
+                                    return `网页: ${url}\n${markdown.slice(0, 6000)}`
+                                } catch (error: any) {
+                                    return `网页访问失败: ${url} (${error.message || String(error)})`
+                                }
+                            }))
+                            verificationContext = verifiedPages.join("\n\n")
                         } catch (error: any) {
                             searchContext = `联网搜索失败: ${error.message || String(error)}`
                         }
@@ -308,7 +335,7 @@ ${available_commands_with_desc}
                             ...chat_history,
                             {
                                 role: "user",
-                                content: `${prompt}\n\n联网搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}`
+                                content: `${prompt}\n\n联网搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\n已交叉核实的网页内容：\n${verificationContext || "未能获取可供核实的网页内容。"}`
                             }
                         ]
                         const tools = [
