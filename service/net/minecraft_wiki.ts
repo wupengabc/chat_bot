@@ -1,6 +1,7 @@
 interface WikiSearchResult {
     title?: string;
     url?: string;
+    snippet?: string;
 }
 
 interface WikiSearchResponse {

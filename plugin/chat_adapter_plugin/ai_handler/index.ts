@@ -4,6 +4,7 @@ import {send_message} from "../../../chat_adapter/index.js";
 import {Structs} from "node-napcat-ts";
 import {get_ai_session} from "../../../service/ai_service/index.js";
 import {searchMarkdown} from "../../../service/net/search.js";
+import {fetchMarkdown} from "../../../service/net/fetch.js";
 import {searchMinecraftWiki, fetchMinecraftWikiPage} from "../../../service/net/minecraft_wiki.js";
 import {get_storage} from "../../../storage/index.js";
 import type {ChatSessionKey, StoredChatMessage} from "../../../storage/chat_storage/index.js";
@@ -295,7 +296,7 @@ ${available_commands_with_desc}
 - 只有用户明确要求执行具体操作，且参数足够时，intent 才能是 execute。
 - 包含“怎么、如何、是否、能否、会不会、是什么、多少钱、需要什么权限”等咨询含义时，intent 必须是 consult，不得执行命令。
 - 无法确定时按 consult 处理。
-- consult 时直接回答用户的问题；不要声称已经执行。对于 Minecraft 相关问题，必须优先使用已提供的 Minecraft Wiki 内容核实；其他问题只能基于已提供的 Bing 搜索结果回答。不要自行列出网址，系统会附上已使用且安全的网址。
+- consult 时直接回答用户的问题；不要声称已经执行。必须基于已提供的 Bing 搜索结果和网页核实内容回答；Minecraft 相关问题优先使用 Minecraft Wiki 内容。不要自行列出网址，系统会附上已使用且安全的网址。
 - execute 时 command 必须是可用命令关键字，args 是参数字符串。
 
 只返回单行 JSON，不要 Markdown：
@@ -307,25 +308,47 @@ ${available_commands_with_desc}
                         const chat_history = this.get_chat_messages(data)
                         const usedUrls: string[] = []
                         let searchContext = ""
+                        let crawledContext = ""
                         let wikiContext = ""
                         try {
                             searchContext = (await searchMarkdown(content_to_recognize)).slice(0, 12000)
+                            const resultUrls = get_safe_search_urls(searchContext)
+                            const crawledPages = await Promise.all(resultUrls.map(async url => {
+                                try {
+                                    const markdown = await fetchMarkdown(url)
+                                    usedUrls.push(url)
+                                    return `网页: ${url}\n${markdown.slice(0, 6000)}`
+                                } catch (error: any) {
+                                    return `网页访问失败: ${url} (${error.message || String(error)})`
+                                }
+                            }))
+                            crawledContext = crawledPages.join("\n\n")
                         } catch (error: any) {
                             searchContext = `联网搜索失败: ${error.message || String(error)}`
                         }
                         try {
                             const wikiResults = await searchMinecraftWiki(content_to_recognize)
-                            const wikiPages = await Promise.all(wikiResults.map(async result => {
-                                if (!result.title) return ""
-                                try {
-                                    const markdown = await fetchMinecraftWikiPage(result.title)
-                                    if (result.url) usedUrls.push(result.url)
-                                    return `页面标题: ${result.title}\n${markdown.slice(0, 6000)}`
-                                } catch (error: any) {
-                                    return `Minecraft Wiki 页面获取失败: ${result.title} (${error.message || String(error)})`
-                                }
-                            }))
-                            wikiContext = wikiPages.filter(Boolean).join("\n\n")
+                            const wikiCandidateList = wikiResults
+                                .map((result, index) => `${index + 1}. 标题: ${result.title || "未知"}\n摘要: ${result.snippet || "无"}\n网址: ${result.url || "无"}`)
+                                .join("\n\n")
+                            const selection = await session.chat.completions.create({
+                                model,
+                                temperature: 0,
+                                max_tokens: 20,
+                                messages: [
+                                    {role: "system", content: "你是 Minecraft Wiki 搜索结果选择器。只输出与用户问题最相关的一个结果编号；若没有相关结果，只输出 0。"},
+                                    {role: "user", content: `用户问题: ${content_to_recognize}\n\n搜索结果:\n${wikiCandidateList}`}
+                                ]
+                            })
+                            const selectedIndex = Number.parseInt(selection.choices[0]?.message?.content?.trim() || "0", 10) - 1
+                            const selectedResult = wikiResults[selectedIndex]
+                            if (selectedResult?.title) {
+                                const markdown = await fetchMinecraftWikiPage(selectedResult.title)
+                                if (selectedResult.url) usedUrls.push(selectedResult.url)
+                                wikiContext = `页面标题: ${selectedResult.title}\n${markdown.slice(0, 12000)}`
+                            } else {
+                                wikiContext = "Minecraft Wiki 未找到与问题相关的页面。"
+                            }
                         } catch (error: any) {
                             wikiContext = `Minecraft Wiki 搜索失败: ${error.message || String(error)}`
                         }
@@ -337,7 +360,7 @@ ${available_commands_with_desc}
                             ...chat_history,
                             {
                                 role: "user",
-                                content: `${prompt}\n\nBing 搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\nMinecraft Wiki 内容（Minecraft 问题优先使用；若内容为搜索失败则忽略）：\n${wikiContext || "未能获取 Minecraft Wiki 内容。"}`
+                                content: `${prompt}\n\nBing 搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\nBing 搜索结果的已抓取网页内容：\n${crawledContext || "未能抓取安全的搜索结果网页。"}\n\nMinecraft Wiki 内容（Minecraft 问题优先使用；若内容为搜索失败则忽略）：\n${wikiContext || "未能获取 Minecraft Wiki 内容。"}`
                             }
                         ]
                         const completion = await session.chat.completions.create({
