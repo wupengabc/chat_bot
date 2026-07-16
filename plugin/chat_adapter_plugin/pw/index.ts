@@ -127,8 +127,7 @@ export class init {
     private get_all_landmarks(bot: any): Promise<Landmark[]> {
         return new Promise((resolve, reject) => {
             const landmarks: Landmark[] = []
-            const page_hashes = new Set<string>()
-            let first_page = true
+            let is_first_page = true
             let finished = false
             let page_timer: NodeJS.Timeout | undefined
             const total_timer = setTimeout(() => finish(new Error("获取地标信息超时")), 90_000)
@@ -151,20 +150,21 @@ export class init {
             const handle_window_open = (window: any) => {
                 if (finished) return
                 if (page_timer) clearTimeout(page_timer)
-                const page = this.parse_landmark_nbt(window)
-                const hash = page.map(item => `${item.owner}\u0000${item.name}\u0000${item.visits}\u0000${item.price}`).join("\n")
-                if (!first_page && (!page.length || page_hashes.has(hash))) return finish()
-                if (page.length) {
-                    page_hashes.add(hash)
-                    landmarks.push(...page)
-                }
-                if (first_page) {
-                    first_page = false
-                    return setTimeout(() => bot.clickWindow(47, 0, 0).catch(() => finish(new Error("进入地标列表失败"))), 500)
-                }
-                if (page_hashes.size >= 100) return finish(new Error("地标页数超过上限"))
+
+                // 按原有流程：每次打开窗口都先解析、重置 5 秒等待计时，
+                // 首页进入列表，之后窗口一律继续点击槽位 50 右键翻页。
+                landmarks.push(...this.parse_landmark_nbt(window))
                 page_timer = setTimeout(() => finish(), 5_000)
-                setTimeout(() => bot.clickWindow(50, 1, 0).catch(() => finish()), 500)
+
+                if (is_first_page) {
+                    is_first_page = false
+                    setTimeout(() => bot.clickWindow(47, 0, 0)
+                        .catch(() => finish(new Error("进入地标列表失败"))), 500)
+                } else {
+                    setTimeout(() => bot.clickWindow(50, 1, 0)
+                        // 翻页失败时不立即结束，等待 5 秒未出现新窗口后正常收尾。
+                        .catch(() => {}), 500)
+                }
             }
             bot.on("windowOpen", handle_window_open)
             bot.on("end", handle_end)
