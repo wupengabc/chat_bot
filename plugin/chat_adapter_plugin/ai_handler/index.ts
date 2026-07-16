@@ -335,90 +335,20 @@ ${available_commands_with_desc}
                                 content: `${prompt}\n\n联网搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\n已交叉核实的网页内容：\n${verificationContext || "未能获取可供核实的网页内容。"}`
                             }
                         ]
-                        const tools = [
-                            {
-                                type: "function" as const,
-                                function: {
-                                    name: "search_markdown",
-                                    description: "使用 Bing 搜索互联网并返回搜索结果的 Markdown。",
-                                    parameters: {
-                                        type: "object",
-                                        properties: {query: {type: "string", description: "搜索关键词"}},
-                                        required: ["query"],
-                                        additionalProperties: false
-                                    }
-                                }
-                            },
-                            {
-                                type: "function" as const,
-                                function: {
-                                    name: "fetch_markdown",
-                                    description: "仅当已核实的具体网页信息不足时，获取 Bing 搜索结果中或用户明确提供的安全网页并返回 Markdown；不要访问 Bing 搜索页。",
-                                    parameters: {
-                                        type: "object",
-                                        properties: {url: {type: "string", description: "需要访问的 http 或 https 网址"}},
-                                        required: ["url"],
-                                        additionalProperties: false
-                                    }
-                                }
-                            }
-                        ]
-
-                        let result_text = ""
-                        for (let iteration = 0; iteration < 2; iteration++) {
-                            const completion = await session.chat.completions.create({
-                                model,
-                                messages,
-                                tools,
-                                temperature: 0.1,
-                                max_tokens: 180
-                            })
-                            const message = completion.choices[0]?.message
-                            if (!message) break
-
-                            messages.push(message)
-                            if (!message.tool_calls?.length) {
-                                result_text = message.content?.trim() || ""
-                                break
-                            }
-
-                            for (const toolCall of message.tool_calls) {
-                                let toolResult: string
-                                try {
-                                    if (toolCall.type !== "function") {
-                                        throw new Error("不支持的工具调用类型")
-                                    }
-                                    const args = JSON.parse(toolCall.function.arguments) as {query?: unknown, url?: unknown}
-                                    if (toolCall.function.name === "search_markdown" && typeof args.query === "string") {
-                                        toolResult = await searchMarkdown(args.query)
-                                    } else if (toolCall.function.name === "fetch_markdown" && typeof args.url === "string") {
-                                        const url = new URL(args.url)
-                                        if (url.protocol !== "http:" && url.protocol !== "https:") {
-                                            throw new Error("仅支持 http 和 https 网址")
-                                        }
-                                        if (contains_sensitive_content(url.href)) {
-                                            throw new Error("不允许访问敏感网址")
-                                        }
-                                        usedUrls.push(url.href)
-                                        toolResult = await fetchMarkdown(url.href)
-                                    } else {
-                                        throw new Error("无效的工具调用参数")
-                                    }
-                                } catch (error: any) {
-                                    toolResult = `工具调用失败: ${error.message || String(error)}`
-                                }
-                                messages.push({
-                                    role: "tool",
-                                    tool_call_id: toolCall.id,
-                                    content: toolResult.slice(0, 12000)
-                                })
-                            }
-                        }
+                        const completion = await session.chat.completions.create({
+                            model,
+                            messages,
+                            temperature: 0.1,
+                            max_tokens: 400
+                        })
+                        const result_text = completion.choices[0]?.message?.content?.trim() || ""
                                                 let result: {intent?: string, command?: string, args?: string, answer?: string}
                         try {
                             result = JSON.parse(result_text)
                         } catch {
-                            result = {intent: "consult", answer: `无法确定是否需要执行命令，请使用 ${this.chat_adapter_prefix}help 查看用法`}
+                            result = result_text
+                                ? {intent: "consult", answer: result_text}
+                                : {intent: "consult", answer: `AI 未返回内容，请稍后再试`}
                         }
 
                         if (result.intent !== "execute") {
