@@ -127,12 +127,11 @@ export class init {
 
         this.status = "connecting"
 
-        // @ts-ignore
         this.bot = mineflayer.createBot({
-            host: config.host,
-            port: config.port,
-            username: config.username,
-            version: config.version,
+            host: typeof config.host === "string" ? config.host : undefined,
+            port: typeof config.port === "number" ? config.port : undefined,
+            username: typeof config.username === "string" ? config.username : "",
+            version: typeof config.version === "string" ? config.version : undefined,
             hideErrors: true,
         })
 

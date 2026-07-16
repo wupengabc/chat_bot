@@ -3,6 +3,8 @@ import {get_chat_adapter_prefix, help_list, plugin_handle_adapter_event, acquire
 import {send_message} from "../../../chat_adapter/index.js";
 import {Structs} from "node-napcat-ts";
 import {get_ai_session} from "../../../service/ai_service/index.js";
+import {searchMarkdown} from "../../../service/net/search.js";
+import {fetchMarkdown} from "../../../service/net/fetch.js";
 import {get_storage} from "../../../storage/index.js";
 import type {ChatSessionKey, StoredChatMessage} from "../../../storage/chat_storage/index.js";
 
@@ -278,7 +280,7 @@ ${available_commands_with_desc}
 - 只有用户明确要求执行具体操作，且参数足够时，intent 才能是 execute。
 - 包含“怎么、如何、是否、能否、会不会、是什么、多少钱、需要什么权限”等咨询含义时，intent 必须是 consult，不得执行命令。
 - 无法确定时按 consult 处理。
-- consult 时直接回答用户的问题；不要声称已经执行。
+- consult 时直接回答用户的问题；不要声称已经执行。需要查询最新网络信息或网页内容时，可先调用提供的工具。
 - execute 时 command 必须是可用命令关键字，args 是参数字符串。
 
 只返回单行 JSON，不要 Markdown：
@@ -288,25 +290,93 @@ ${available_commands_with_desc}
 可用命令关键字: ${available_commands}`
                         
                         const chat_history = this.get_chat_messages(data)
-                        const completion = await session.chat.completions.create({
-                            model: model,
-                            messages: [
-                                {
-                                    role: "system",
-                                    content: "你是谨慎的命令意图助手。普通询问绝不能触发命令；只有明确、具体的执行请求才能返回 execute。严格输出指定 JSON。不得提供或复述色情、未成年人相关内容、自残、暴力危险行为、违法攻击、诈骗或政治敏感内容。遇到此类内容必须返回 consult，并简洁拒绝。"
-                                },
-                                ...chat_history,
-                                {
-                                    role: "user",
-                                    content: prompt
+                        const messages: any[] = [
+                            {
+                                role: "system",
+                                content: "你是谨慎的命令意图助手。普通询问绝不能触发命令；只有明确、具体的执行请求才能返回 execute。需要查询最新网络信息或网页内容时可调用工具，完成后严格输出指定 JSON。不得提供或复述色情、未成年人相关内容、自残、暴力危险行为、违法攻击、诈骗或政治敏感内容。遇到此类内容必须返回 consult，并简洁拒绝。"
+                            },
+                            ...chat_history,
+                            {
+                                role: "user",
+                                content: prompt
+                            }
+                        ]
+                        const tools = [
+                            {
+                                type: "function" as const,
+                                function: {
+                                    name: "search_markdown",
+                                    description: "使用 Bing 搜索互联网并返回搜索结果的 Markdown。",
+                                    parameters: {
+                                        type: "object",
+                                        properties: {query: {type: "string", description: "搜索关键词"}},
+                                        required: ["query"],
+                                        additionalProperties: false
+                                    }
                                 }
-                            ],
-                            temperature: 0.1,
-                            max_tokens: 180
-                        })
-                        
-                        const result_text = completion.choices[0]?.message?.content?.trim() || ""
-                        let result: {intent?: string, command?: string, args?: string, answer?: string}
+                            },
+                            {
+                                type: "function" as const,
+                                function: {
+                                    name: "fetch_markdown",
+                                    description: "获取指定网页并返回转换后的 Markdown。",
+                                    parameters: {
+                                        type: "object",
+                                        properties: {url: {type: "string", description: "需要访问的 http 或 https 网址"}},
+                                        required: ["url"],
+                                        additionalProperties: false
+                                    }
+                                }
+                            }
+                        ]
+
+                        let result_text = ""
+                        for (let iteration = 0; iteration < 3; iteration++) {
+                            const completion = await session.chat.completions.create({
+                                model,
+                                messages,
+                                tools,
+                                temperature: 0.1,
+                                max_tokens: 180
+                            })
+                            const message = completion.choices[0]?.message
+                            if (!message) break
+
+                            messages.push(message)
+                            if (!message.tool_calls?.length) {
+                                result_text = message.content?.trim() || ""
+                                break
+                            }
+
+                            for (const toolCall of message.tool_calls) {
+                                let toolResult: string
+                                try {
+                                    if (toolCall.type !== "function") {
+                                        throw new Error("不支持的工具调用类型")
+                                    }
+                                    const args = JSON.parse(toolCall.function.arguments) as {query?: unknown, url?: unknown}
+                                    if (toolCall.function.name === "search_markdown" && typeof args.query === "string") {
+                                        toolResult = await searchMarkdown(args.query)
+                                    } else if (toolCall.function.name === "fetch_markdown" && typeof args.url === "string") {
+                                        const url = new URL(args.url)
+                                        if (url.protocol !== "http:" && url.protocol !== "https:") {
+                                            throw new Error("仅支持 http 和 https 网址")
+                                        }
+                                        toolResult = await fetchMarkdown(url.href)
+                                    } else {
+                                        throw new Error("无效的工具调用参数")
+                                    }
+                                } catch (error: any) {
+                                    toolResult = `工具调用失败: ${error.message || String(error)}`
+                                }
+                                messages.push({
+                                    role: "tool",
+                                    tool_call_id: toolCall.id,
+                                    content: toolResult.slice(0, 12000)
+                                })
+                            }
+                        }
+                                                let result: {intent?: string, command?: string, args?: string, answer?: string}
                         try {
                             result = JSON.parse(result_text)
                         } catch {
