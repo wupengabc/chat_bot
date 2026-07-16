@@ -177,7 +177,7 @@ export class init {
         // ── 错误 ──
         this.bot.on("error", (err: any) => {
             this.logger(`实例 ${config.name} 错误: ${err.message || err.toString() || "错误"}`, "error")
-            this.event.emit("error", {adapter: "mineflayer", instance_name: config.name, error: err.message || err.toString() })
+            this.event.emit("adapter_error", {adapter: "mineflayer", instance_name: config.name, error: err.message || err.toString() })
         })
 
         // ── 踢出 ──

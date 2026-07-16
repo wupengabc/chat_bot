@@ -136,6 +136,7 @@ export class init {
                 if (page_timer) clearTimeout(page_timer)
                 bot.removeListener("windowOpen", handle_window_open)
                 bot.removeListener("end", handle_end)
+                bot.removeListener("error", handle_error)
                 if (bot.currentWindow) bot.closeWindow(bot.currentWindow)
             }
             const finish = (error?: Error) => {
@@ -147,6 +148,7 @@ export class init {
                 else resolve(landmarks)
             }
             const handle_end = () => finish(new Error("Bot 已断开连接"))
+            const handle_error = (error: any) => finish(new Error(`Bot 协议错误: ${error?.message || error}`))
             const handle_window_open = (window: any) => {
                 if (finished) return
                 if (page_timer) clearTimeout(page_timer)
@@ -168,6 +170,7 @@ export class init {
             }
             bot.on("windowOpen", handle_window_open)
             bot.on("end", handle_end)
+            bot.on("error", handle_error)
             bot.chat("/pw")
         })
     }
