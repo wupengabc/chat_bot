@@ -37,7 +37,7 @@ function get_safe_search_urls(markdown: string): string[] {
             // 忽略格式不正确的搜索结果链接
         }
     }
-    return [...urls].slice(0, 3)
+    return [...urls].slice(0, 2)
 }
 
 export function is_dispatchable_correction(command: string, handler_command: string, commands: string[]): boolean {
@@ -309,9 +309,6 @@ ${available_commands_with_desc}
                         let searchContext = ""
                         let verificationContext = ""
                         try {
-                            const searchUrl = new URL("https://www.bing.com/search")
-                            searchUrl.searchParams.set("q", content_to_recognize)
-                            usedUrls.push(searchUrl.href)
                             searchContext = (await searchMarkdown(content_to_recognize)).slice(0, 12000)
                             const verificationUrls = get_safe_search_urls(searchContext)
                             const verifiedPages = await Promise.all(verificationUrls.map(async url => {
@@ -356,7 +353,7 @@ ${available_commands_with_desc}
                                 type: "function" as const,
                                 function: {
                                     name: "fetch_markdown",
-                                    description: "获取 Bing 搜索结果中或用户明确提供的安全网页并返回转换后的 Markdown；仅在搜索摘要不足、矛盾或需要核实时调用。",
+                                    description: "仅当已核实的具体网页信息不足时，获取 Bing 搜索结果中或用户明确提供的安全网页并返回 Markdown；不要访问 Bing 搜索页。",
                                     parameters: {
                                         type: "object",
                                         properties: {url: {type: "string", description: "需要访问的 http 或 https 网址"}},
@@ -368,7 +365,7 @@ ${available_commands_with_desc}
                         ]
 
                         let result_text = ""
-                        for (let iteration = 0; iteration < 3; iteration++) {
+                        for (let iteration = 0; iteration < 2; iteration++) {
                             const completion = await session.chat.completions.create({
                                 model,
                                 messages,
@@ -393,9 +390,6 @@ ${available_commands_with_desc}
                                     }
                                     const args = JSON.parse(toolCall.function.arguments) as {query?: unknown, url?: unknown}
                                     if (toolCall.function.name === "search_markdown" && typeof args.query === "string") {
-                                        const searchUrl = new URL("https://www.bing.com/search")
-                                        searchUrl.searchParams.set("q", args.query)
-                                        usedUrls.push(searchUrl.href)
                                         toolResult = await searchMarkdown(args.query)
                                     } else if (toolCall.function.name === "fetch_markdown" && typeof args.url === "string") {
                                         const url = new URL(args.url)
