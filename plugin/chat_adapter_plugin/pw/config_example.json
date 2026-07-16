@@ -1,0 +1,5 @@
+{
+  "name": "pw",
+  "description": "同步和查询服务器地标",
+  "configs": [{"name": "default"}]
+}

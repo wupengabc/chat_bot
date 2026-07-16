@@ -97,7 +97,7 @@ export class init {
         if (!instance || instance.status !== "running") return this.reply(data, "Bot暂未连接至服务器")
 
         let task_started = false
-        const accepted = await instance.execute_single_task(async () => {
+        const accepted = await instance.run_single_task(async () => {
             task_started = true
             const controller = new AbortController()
             const task_timeout = setTimeout(() => controller.abort(), 90_000)

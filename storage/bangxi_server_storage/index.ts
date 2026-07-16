@@ -161,6 +161,21 @@ const shop_price_table = sqliteTable("shop_price", {
     price: integer("price").notNull(),
 })
 
+const landmark_table = sqliteTable("landmark", {
+    id: integer("id").primaryKey({autoIncrement: true}),
+    name: text("name").notNull(),
+    name_key: text("name_key").notNull(),
+    description: text("description").notNull(),
+    owner: text("owner").notNull(),
+    owner_key: text("owner_key").notNull(),
+    visits: integer("visits").notNull(),
+    price: text("price").notNull(),
+    item_id: text("item_id").notNull(),
+    batch_id: text("batch_id").notNull(),
+    first_seen_at: text("first_seen_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+})
+
 export class init {
     private database_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "bangxi_server.db")
     private last_player_list_path = path.join(path_utils.get_project_root_path(), "/storage/bangxi_server_storage/data", "last_player_list.json")
@@ -225,12 +240,17 @@ export class init {
         this.database.exec(point_log_table_init_sql)
         const shop_price_table_init_sql = orm_utils.convert_table_to_sqlite_sql(shop_price_table)
         this.database.exec(shop_price_table_init_sql)
+        const landmark_table_init_sql = orm_utils.convert_table_to_sqlite_sql(landmark_table)
+        this.database.exec(landmark_table_init_sql)
         this.migrate_shop_price_table()
         this.database.exec("CREATE INDEX IF NOT EXISTS idx_point_log_game_id ON point_log(game_id)")
         this.database.exec("CREATE INDEX IF NOT EXISTS idx_point_log_sign_lookup ON point_log(game_id, ext, create_at)")
         this.database.exec("CREATE INDEX IF NOT EXISTS idx_shop_price_item_type_shop ON shop_price(item_id, sell_type, shop_name, id)")
         this.database.exec("CREATE INDEX IF NOT EXISTS idx_shop_price_shop ON shop_price(shop_name, id)")
         this.database.exec("CREATE INDEX IF NOT EXISTS idx_shop_price_batch ON shop_price(batch_id)")
+        this.database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_landmark_owner_name ON landmark(owner_key, name_key)")
+        this.database.exec("CREATE INDEX IF NOT EXISTS idx_landmark_name ON landmark(name_key, id)")
+        this.database.exec("CREATE INDEX IF NOT EXISTS idx_landmark_owner ON landmark(owner_key, name_key, id)")
         this.restore_player_list()
     }
 
@@ -785,6 +805,89 @@ export class init {
 
     delete_shop_price_batch(batch_id: string) {
         return this.database.prepare("DELETE FROM shop_price WHERE batch_id = ?").run(batch_id).changes
+    }
+
+    sync_landmarks(landmarks: Array<{name: string, description: string, owner: string, visits: number, price: string, item_id?: string}>) {
+        if (!Array.isArray(landmarks) || landmarks.length === 0) return {success: false as const, message: "没有读取到有效地标"}
+        const rows = landmarks.map(landmark => ({
+            name: landmark.name?.trim(), description: landmark.description?.trim() || "None",
+            owner: landmark.owner?.trim(), visits: Math.max(0, Math.floor(Number(landmark.visits) || 0)),
+            price: landmark.price?.trim() || "None", item_id: landmark.item_id?.trim() || ""
+        }))
+        if (rows.some(row => !row.name || !row.owner || row.name.length > 128 || row.owner.length > 64 || row.description.length > 2000 || row.price.length > 128 || row.item_id.length > 256)) {
+            return {success: false as const, message: "地标数据包含无效字段"}
+        }
+        const batch_id = crypto.randomUUID()
+        const now = new Date().toISOString()
+        const normalize = (value: string) => value.trim().toLocaleLowerCase()
+        return this.database.transaction(() => {
+            const existing = new Map((this.database.prepare("SELECT id, owner_key, name_key FROM landmark").all() as Array<{id: number, owner_key: string, name_key: string}>)
+                .map(row => [`${row.owner_key}\u0000${row.name_key}`, row]))
+            const seen = new Set<string>()
+            const insert = this.database.prepare("INSERT INTO landmark (name, name_key, description, owner, owner_key, visits, price, item_id, batch_id, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            const update = this.database.prepare("UPDATE landmark SET name = ?, description = ?, owner = ?, visits = ?, price = ?, item_id = ?, batch_id = ?, updated_at = ? WHERE id = ?")
+            let inserted = 0
+            let updated = 0
+            for (const row of rows) {
+                const name_key = normalize(row.name!)
+                const owner_key = normalize(row.owner!)
+                const key = `${owner_key}\u0000${name_key}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                const current = existing.get(key)
+                if (current) {
+                    update.run(row.name, row.description, row.owner, row.visits, row.price, row.item_id, batch_id, now, current.id)
+                    updated++
+                } else {
+                    insert.run(row.name, name_key, row.description, row.owner, owner_key, row.visits, row.price, row.item_id, batch_id, now, now)
+                    inserted++
+                }
+            }
+            const remove = this.database.prepare("DELETE FROM landmark WHERE batch_id <> ?").run(batch_id).changes
+            return {success: true as const, batch_id, inserted, updated, deleted: remove, total: seen.size}
+        })()
+    }
+
+    get_landmarks_page(page: number = 1, page_size: number = 10) {
+        const safe_page = Number.isInteger(page) && page > 0 ? page : 1
+        const safe_size = Number.isInteger(page_size) ? Math.min(Math.max(page_size, 1), 30) : 10
+        const total = (this.database.prepare("SELECT COUNT(*) AS count FROM landmark").get() as {count: number}).count
+        const rows = this.database.prepare("SELECT name, description, owner, visits, price, item_id, updated_at FROM landmark ORDER BY name_key ASC, owner_key ASC, id ASC LIMIT ? OFFSET ?")
+            .all(safe_size, (safe_page - 1) * safe_size)
+        return {page: safe_page, page_size: safe_size, total, rows}
+    }
+
+    search_landmarks(keyword: string, limit: number = 20) {
+        const query = keyword.trim()
+        if (!query) return []
+        const safe_limit = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 30) : 20
+        return this.database.prepare("SELECT name, description, owner, visits, price, item_id, updated_at FROM landmark WHERE name LIKE ? COLLATE NOCASE OR description LIKE ? COLLATE NOCASE ORDER BY name_key ASC, owner_key ASC, id ASC LIMIT ?")
+            .all(`%${query}%`, `%${query}%`, safe_limit)
+    }
+
+    get_landmarks_by_owner(owner: string, limit: number = 30) {
+        const owner_key = owner.trim().toLocaleLowerCase()
+        if (!owner_key) return []
+        const safe_limit = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 50) : 30
+        return this.database.prepare("SELECT name, description, owner, visits, price, item_id, updated_at FROM landmark WHERE owner_key = ? ORDER BY name_key ASC, id ASC LIMIT ?")
+            .all(owner_key, safe_limit)
+    }
+
+    get_landmarks_by_name(name: string, limit: number = 20) {
+        const name_key = name.trim().toLocaleLowerCase()
+        if (!name_key) return []
+        const safe_limit = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 30) : 20
+        return this.database.prepare("SELECT name, description, owner, visits, price, item_id, updated_at FROM landmark WHERE name_key = ? ORDER BY owner_key ASC, id ASC LIMIT ?")
+            .all(name_key, safe_limit)
+    }
+
+    get_landmark_stats() {
+        return this.database.prepare("SELECT COUNT(*) AS total, COUNT(DISTINCT owner_key) AS owners, COALESCE(SUM(visits), 0) AS visits, MAX(updated_at) AS updated_at FROM landmark").get()
+    }
+
+    get_top_landmarks(limit: number = 10) {
+        const safe_limit = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 30) : 10
+        return this.database.prepare("SELECT name, owner, visits, price FROM landmark ORDER BY visits DESC, name_key ASC, owner_key ASC LIMIT ?").all(safe_limit)
     }
 
     delete_shop_prices(shop_name: string) {
