@@ -30,6 +30,7 @@
     "express": "^5.2.1",
     "minecraft-protocol": "github:wupengabc/node-minecraft-protocol",
     "mineflayer": "github:wupengabc/mineflayer",
+    "node-html-markdown": "^2.0.0",
     "node-napcat-ts": "^0.4.25",
     "openai": "^6.46.0",
     "qq-official-bot": "^1.2.3",
