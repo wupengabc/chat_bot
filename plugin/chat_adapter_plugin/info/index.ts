@@ -25,7 +25,14 @@ export class init {
         keyword: "info",
         description: "获取玩家详细信息",
         permission: 0,
-        args: ["玩家名(可选, 默认查询自己)(查询自己50积分 查询其他玩家100积分)"],
+        args: [
+            {
+                key: "玩家名",
+                description: "可选；默认查询自己。查询自己消耗 50 积分，查询其他玩家消耗 100 积分",
+                permission: 0,
+                args: [],
+            },
+        ],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword

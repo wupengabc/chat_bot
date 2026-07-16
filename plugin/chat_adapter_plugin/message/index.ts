@@ -16,7 +16,10 @@ export class init {
         keyword: "message",
         description: "查询服务器消息记录",
         permission: 0,
-        args: ["页码(默认1)", "条数(10-20 默认15)"],
+        args: [
+            { key: "页码", description: "默认 1", permission: 0, args: [] },
+            { key: "条数", description: "10–20，默认 15", permission: 0, args: [] },
+        ],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword

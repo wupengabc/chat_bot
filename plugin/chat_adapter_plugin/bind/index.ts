@@ -18,7 +18,29 @@ export class init {
         keyword: "bind",
         description: "绑定您的游戏账户到Chat",
         permission: 0,
-        args: ["操作[get(获取绑定信息), set(绑定游戏账户), delete(删除绑定信息)]", "游戏账户id(可选)"],
+        args: [
+            {
+                key: "get",
+                description: "获取绑定信息",
+                permission: 0,
+                args: [],
+            },
+            {
+                key: "set",
+                description: "绑定游戏账户",
+                permission: 0,
+                args: [
+                    { key: "游戏账户id", description: "要绑定的游戏账户 ID", permission: 0, args: [] },
+                    { key: "游戏账户名", description: "可选，用于指定账户名称", permission: 0, args: [] },
+                ],
+            },
+            {
+                key: "delete",
+                description: "删除绑定信息",
+                permission: 0,
+                args: [],
+            },
+        ],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword

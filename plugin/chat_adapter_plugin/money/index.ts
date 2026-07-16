@@ -24,7 +24,7 @@ export class init {
         keyword: "money",
         description: "查询玩家金币数量",
         permission: 0,
-        args: ["玩家名(可选, 默认查询自己)"],
+        args: [{ key: "玩家名", description: "可选，默认查询自己", permission: 0, args: [] }],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword

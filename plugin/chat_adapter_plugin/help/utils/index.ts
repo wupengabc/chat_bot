@@ -1,12 +1,13 @@
 import { Resvg } from '@resvg/resvg-js';
 import { existsSync } from 'node:fs';
 import { permission_map } from '../../../index.js';
+import type { help_arg } from '../../../type.js';
 
 export interface CommandHelpItem {
     name?: string;
     keyword?: string;
     description?: string;
-    args?: Array<string | number>;
+    args?: help_arg[];
     platform?: string;
     permission?: string | number;
 }
@@ -425,17 +426,24 @@ function getArgs(
     }
 
     const list = args
-        .filter(
-            (value) =>
-                value !== undefined &&
-                value !== null &&
-                String(value).trim()
-        )
-        .map((value) => String(value).trim());
+        .filter((arg) => arg?.key?.trim())
+        .map((arg) => formatHelpArg(arg));
 
-    return list.length > 0
-        ? list.join('、')
-        : '无';
+    return list.length > 0 ? list.join('、') : '无';
+}
+
+function formatHelpArg(arg: help_arg): string {
+    const nestedArgs = arg.args.length > 0
+        ? ` ${arg.args.map((child) => formatHelpArg(child)).join(' ')}`
+        : '';
+    const description = arg.description.trim()
+        ? `（${arg.description.trim()}）`
+        : '';
+    const permission = arg.permission > 0
+        ? `（权限等级 ${arg.permission}）`
+        : '';
+
+    return `${arg.key.trim()}${description}${permission}${nestedArgs}`;
 }
 
 /* =========================================================

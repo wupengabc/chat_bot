@@ -26,11 +26,11 @@ export class init {
         description: "查询、管理积分及每日签到",
         permission: 0,
         args: [
-            "get(获取我的积分数) [游戏账号(权限等级2可选，用于查询指定玩家)]",
-            "log(获取最新10条积分记录) [游戏账号(权限等级2可选，用于查询指定玩家)]",
-            "sign(每日签到) [get(获取签到积分概率)]",
-            "add(添加积分) <游戏账号(目标玩家)> <积分数(添加数量)> <原因(添加原因)>",
-            "delete(删除积分) <游戏账号(目标玩家)> <积分数(删除数量)> <原因(删除原因)>"
+            { key: "get", description: "获取我的积分数", permission: 0, args: [{ key: "游戏账号", description: "可选，用于查询指定玩家", permission: 2, args: [] }] },
+            { key: "log", description: "获取最新 10 条积分记录", permission: 0, args: [{ key: "游戏账号", description: "可选，用于查询指定玩家", permission: 2, args: [] }] },
+            { key: "sign", description: "每日签到", permission: 0, args: [{ key: "get", description: "获取签到积分概率", permission: 0, args: [] }] },
+            { key: "add", description: "添加积分", permission: 2, args: [{ key: "游戏账号", description: "目标玩家", permission: 2, args: [] }, { key: "积分数", description: "添加数量", permission: 2, args: [] }, { key: "原因", description: "添加原因", permission: 2, args: [] }] },
+            { key: "delete", description: "删除积分", permission: 2, args: [{ key: "游戏账号", description: "目标玩家", permission: 2, args: [] }, { key: "积分数", description: "删除数量", permission: 2, args: [] }, { key: "原因", description: "删除原因", permission: 2, args: [] }] },
         ],
         platform: "chat_adapter",
     }

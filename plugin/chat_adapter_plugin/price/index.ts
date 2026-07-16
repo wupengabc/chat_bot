@@ -19,10 +19,36 @@ export class init {
     public help: help = {
         name: "price", keyword: "price", description: "查询和更新商店价格", permission: 0,
         args: [
-            "update <商店名>（消耗100积分）",
-            "avg <物品名> <出售|收购>",
-            "get <物品名> <出售|收购>（权限等级2）",
-            "delete <商店名>（权限等级2）"
+            {
+                key: "update",
+                description: "更新商店价格，消耗 100 积分",
+                permission: 0,
+                args: [{ key: "商店名", description: "要更新的商店", permission: 0, args: [] }],
+            },
+            {
+                key: "avg",
+                description: "查询物品平均价格",
+                permission: 0,
+                args: [
+                    { key: "物品名", description: "要查询的物品", permission: 0, args: [] },
+                    { key: "出售|收购", description: "价格类型", permission: 0, args: [] },
+                ],
+            },
+            {
+                key: "get",
+                description: "查询物品价格",
+                permission: 2,
+                args: [
+                    { key: "物品名", description: "要查询的物品", permission: 2, args: [] },
+                    { key: "出售|收购", description: "价格类型", permission: 2, args: [] },
+                ],
+            },
+            {
+                key: "delete",
+                description: "删除商店价格",
+                permission: 2,
+                args: [{ key: "商店名", description: "要删除的商店", permission: 2, args: [] }],
+            },
         ],
         platform: "chat_adapter"
     }

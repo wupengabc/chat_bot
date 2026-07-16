@@ -15,7 +15,7 @@ export class init {
         keyword: "motd",
         description: "motd 插件, 用于获取Minecraft服务器的 MOTD 信息",
         permission: 0,
-        args: ["服务器地址(可选 默认mc.bangxi.top)"],
+        args: [{ key: "服务器地址", description: "可选，默认 mc.bangxi.top", permission: 0, args: [] }],
         platform: "chat_adapter"
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword

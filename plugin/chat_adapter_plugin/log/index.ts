@@ -17,7 +17,12 @@ export class init {
         keyword: "log",
         description: "查询系统运行日志",
         permission: 2,
-        args: ["[页码] [type=info|warn|error] [platform=<平台>] [plugin=<插件>]"],
+        args: [
+            { key: "页码", description: "可选", permission: 2, args: [] },
+            { key: "type", description: "可选，info、warn 或 error", permission: 2, args: [] },
+            { key: "platform", description: "可选，按平台筛选", permission: 2, args: [] },
+            { key: "plugin", description: "可选，按插件筛选", permission: 2, args: [] },
+        ],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword

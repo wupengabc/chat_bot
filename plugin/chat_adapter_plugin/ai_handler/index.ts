@@ -201,7 +201,7 @@ export class init {
 
                         // 构建 AI 提示词
                         const available_commands_with_desc = correction_commands
-                            .map(command => `${command.keyword}: ${command.description}${command.args.length > 0 ? ` (参数: ${command.args.join(", ")})` : ""}`)
+                            .map(command => `${command.keyword}: ${command.description}${command.args.length > 0 ? ` (参数: ${command.args.map(arg => arg.key).join(", ")})` : ""}`)
                             .join("\n")
 
                         const available_commands = correction_commands

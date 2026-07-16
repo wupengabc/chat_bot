@@ -15,7 +15,7 @@ export class init {
         keyword: "help",
         description: "获取聊天适配器的帮助",
         permission: 0,
-        args: ["页码(可选)"],
+        args: [{ key: "页码", description: "可选", permission: 0, args: [] }],
         platform: "chat_adapter",
     }
     private command_start = get_chat_adapter_prefix() + this.help.keyword
