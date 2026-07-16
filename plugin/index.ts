@@ -29,8 +29,8 @@ const running_plugins = new Map<string, Map<string, RunningPlugin>>()
 export const help_list: help[] = []
 export const permission_map = {
     0: "普通用户",
-    1: "vip用户",
-    2: "管理员",
+    1: "超级用户",
+    2: "Bot管理",
 }
 
 /* ===================== 用户插件锁 ===================== */

@@ -634,13 +634,14 @@ function drawTag(
 
             svgMiddleText(
                 safeText,
-                x + horizontalPadding,
+                x + width / 2,
                 y + options.height / 2,
                 {
                     fontFamily: options.fontFamily,
                     fontSize: options.fontSize,
                     fontWeight: 600,
-                    fill: options.foreground
+                    fill: options.foreground,
+                    anchor: 'middle'
                 }
             )
         ].join('')
@@ -1144,11 +1145,9 @@ export function renderCommandHelpSvg(
                 const rowHeight = Math.max(tagHeight, arg.lines.length * infoLineHeight);
                 const rowX = textX + 8 + arg.depth * 16;
                 const rowWidth = contentWidth - 16 - arg.depth * 16;
-                const naturalWidth = Math.ceil(
-                    estimateTextWidth(arg.permissionText, infoSize, 600) + 20
-                );
-                const tag = drawTag(arg.permissionText, rowX + rowWidth - naturalWidth, argY, {
-                    maxWidth: Math.min(rowWidth / 2, naturalWidth),
+                const tagMaxWidth = Math.min(190, Math.floor(rowWidth * 0.3));
+                const tag = drawTag(arg.permissionText, rowX + rowWidth - tagMaxWidth, argY, {
+                    maxWidth: tagMaxWidth,
                     background: arg.depth === 0 ? '#e8f1f8' : '#f4f4f1',
                     foreground: arg.depth === 0 ? '#315e7c' : '#5d665a',
                     border: arg.depth === 0 ? '#adc7d8' : '#cfd3c9',
