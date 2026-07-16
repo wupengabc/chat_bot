@@ -230,8 +230,7 @@ export class init {
         return JSON.parse(fs.readFileSync(path.join(path_utils.get_project_root_path(), `/game_adapter/mineflayer/data/language/${lang}/${lang}.json`), "utf-8"))
     }
 
-    /** 以独占方式执行需要操作游戏窗口或发送服务器命令的任务。 */
-    async run_single_task(task: () => void | Promise<void>, join_to_queue: boolean = false) :Promise<boolean> {
+    async execute_single_task(task: () => void | Promise<void>, join_to_queue: boolean = false) :Promise<boolean> {
         if (this.single_task_status !== "stopped") {
             if (join_to_queue) {
                 this.task_queue.push(task)

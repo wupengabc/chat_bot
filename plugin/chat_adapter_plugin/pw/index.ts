@@ -66,7 +66,7 @@ export class init {
         const instance = get_game_adapter("mineflayer", "bangxi")
         if (!instance || instance.status !== "running") return this.reply(data, "Bot暂未连接至服务器")
         let started = false
-        const accepted = await instance.run_single_task(async () => {
+        const accepted = await instance.execute_single_task(async () => {
             started = true
             this.reply(data, `正在${flags.includes("--dry-run") ? "预览" : "更新"}全部地标，最多等待 90 秒……`)
             const landmarks = await this.get_all_landmarks(instance.bot)
