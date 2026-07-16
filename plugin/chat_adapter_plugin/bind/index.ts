@@ -30,8 +30,7 @@ export class init {
                 description: "绑定游戏账户",
                 permission: 0,
                 args: [
-                    { key: "游戏账户id", description: "要绑定的游戏账户 ID", permission: 0, args: [] },
-                    { key: "游戏账户名", description: "可选，用于指定账户名称", permission: 0, args: [] },
+                    { key: "游戏账号", description: "要绑定的 Minecraft 用户名", permission: 0, args: [] },
                 ],
             },
             {

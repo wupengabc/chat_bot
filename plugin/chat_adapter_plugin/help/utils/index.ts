@@ -445,8 +445,9 @@ function getPreparedArgs(
         const description = arg.description.trim()
             ? `：${arg.description.trim()}`
             : '';
+        const prefix = depth > 0 ? '└ ' : '';
         const lines = wrapText(
-            `${'　'.repeat(depth)}${arg.key.trim()}${description}`,
+            `${prefix}${arg.key.trim()}${description}`,
             textWidth,
             infoSize,
             400
@@ -1141,24 +1142,30 @@ export function renderCommandHelpSvg(
             let argY = textY + 4;
             item.args.forEach((arg) => {
                 const rowHeight = Math.max(tagHeight, arg.lines.length * infoLineHeight);
+                const rowX = textX + 8 + arg.depth * 16;
+                const rowWidth = contentWidth - 16 - arg.depth * 16;
                 const naturalWidth = Math.ceil(
                     estimateTextWidth(arg.permissionText, infoSize, 600) + 20
                 );
-                const tag = drawTag(arg.permissionText, textX + contentWidth - naturalWidth, argY, {
-                    maxWidth: Math.min(contentWidth / 2, naturalWidth),
-                    background: '#eef4f8',
-                    foreground: '#3d6280',
-                    border: '#b4c7d4',
+                const tag = drawTag(arg.permissionText, rowX + rowWidth - naturalWidth, argY, {
+                    maxWidth: Math.min(rowWidth / 2, naturalWidth),
+                    background: arg.depth === 0 ? '#e8f1f8' : '#f4f4f1',
+                    foreground: arg.depth === 0 ? '#315e7c' : '#5d665a',
+                    border: arg.depth === 0 ? '#adc7d8' : '#cfd3c9',
                     fontFamily,
                     fontSize: infoSize,
                     height: tagHeight,
                 });
                 svg.push(
-                    svgTextLines(arg.lines, textX + 10, argY + 3, infoLineHeight, {
+                    svgRect(rowX, argY, rowWidth, rowHeight, {
+                        fill: arg.depth === 0 ? '#fbfcfa' : '#f8f7f2',
+                        stroke: arg.depth === 0 ? '#d5e0d4' : '#e5e1d5',
+                    }),
+                    svgTextLines(arg.lines, rowX + 10, argY + 3, infoLineHeight, {
                         fontFamily,
                         fontSize: infoSize,
-                        fontWeight: 400,
-                        fill: '#65506f',
+                        fontWeight: arg.depth === 0 ? 600 : 400,
+                        fill: arg.depth === 0 ? '#354d42' : '#655f50',
                     }),
                     tag.svg
                 );
