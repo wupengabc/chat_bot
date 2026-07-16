@@ -69,7 +69,7 @@ export class init {
         const accepted = await instance.execute_single_task(async () => {
             started = true
             this.reply(data, `正在${flags.includes("--dry-run") ? "预览" : "更新"}全部地标，最多等待 90 秒……`)
-            const landmarks = await this.get_all_landmarks(instance.bot)
+            const landmarks = await this.get_all_landmarks(instance)
             if (flags.includes("--dry-run")) return this.reply(data, `地标预览完成：共读取 ${landmarks.length} 条有效地标，未写入数据表`)
             const result = storage.sync_landmarks(landmarks)
             if (!result.success) throw new Error(result.message)
@@ -124,7 +124,8 @@ export class init {
         this.reply(data, `地标统计\n地标总数：${result.total}\n地标主人：${result.owners}\n累计访问：${result.visits}\n最近同步：${result.updated_at || "暂无"}`)
     }
 
-    private get_all_landmarks(bot: any): Promise<Landmark[]> {
+    private get_all_landmarks(instance: any): Promise<Landmark[]> {
+        const bot = instance.bot
         return new Promise((resolve, reject) => {
             const landmarks: Landmark[] = []
             let is_first_page = true
@@ -171,7 +172,7 @@ export class init {
             bot.on("windowOpen", handle_window_open)
             bot.on("end", handle_end)
             bot.on("error", handle_error)
-            bot.chat("/pw")
+            if (!instance.send_message("/pw")) finish(new Error("Bot暂未连接至服务器"))
         })
     }
 
