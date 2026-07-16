@@ -3,6 +3,25 @@ import {get_chat_adapter_prefix, help_list, plugin_handle_adapter_event, acquire
 import {send_message} from "../../../chat_adapter/index.js";
 import {Structs} from "node-napcat-ts";
 import {get_ai_session} from "../../../service/ai_service/index.js";
+import {get_storage} from "../../../storage/index.js";
+import type {ChatSessionKey, StoredChatMessage} from "../../../storage/chat_storage/index.js";
+
+const SENSITIVE_PATTERNS: RegExp[] = [
+    // 色情、未成年人、自残与暴力危险行为
+    /(?:未成年|儿童|小学生|幼女|幼男).{0,12}(?:色情|裸聊|性交易|性行为|做爱)/i,
+    /(?:色情|裸聊|约炮|成人视频|性交易|强奸|迷奸|偷拍)/i,
+    /(?:自杀|自残|割腕|轻生|结束生命|不想活)/i,
+    /(?:制枪|造枪|爆炸物|炸弹|燃烧瓶|投毒|下毒|毒品|制毒|冰毒|海洛因)/i,
+    // 违法攻击、诈骗与绕过安全措施
+    /(?:黑客|入侵|撞库|盗号|钓鱼|ddos|sql注入|木马|勒索软件|破解密码|绕过验证|提权)/i,
+    /(?:诈骗|洗钱|套现|跑分|伪造证件|假币)/i,
+    // 政治及敏感议题
+    /(?:政治敏感|敏感政治|颠覆国家政权|分裂国家|恐怖主义|极端主义)/i,
+]
+
+export function contains_sensitive_content(content: string): boolean {
+    return SENSITIVE_PATTERNS.some(pattern => pattern.test(content))
+}
 
 export function is_dispatchable_correction(command: string, handler_command: string, commands: string[]): boolean {
     return command !== handler_command && commands.includes(command)
@@ -35,7 +54,11 @@ export class init {
     /** 清理定时器 */
     private cleanup_timer: ReturnType<typeof setInterval> | null = null
     
-    constructor() {
+    private readonly config: {name: string, history_limit?: number}
+    private static readonly HISTORY_LIMIT = 30
+
+    constructor(config: {name: string, history_limit?: number}) {
+        this.config = config
         // 定期清理过期的历史记录
         this.cleanup_timer = setInterval(() => {
             const now = Date.now()
@@ -56,6 +79,31 @@ export class init {
         this.correction_history.clear()
     }
     
+    private get_chat_session_key(data: any): ChatSessionKey {
+        return {
+            plugin_name: "ai_handler_chat",
+            config_name: this.config.name,
+            sender_id: String(data.sender.id),
+        }
+    }
+
+    private get_chat_messages(data: any): StoredChatMessage[] {
+        const chat_storage = get_storage("chat_storage")
+        if (!chat_storage) return []
+
+        return chat_storage.get_recent_messages(
+            this.get_chat_session_key(data),
+            this.config.history_limit ?? init.HISTORY_LIMIT
+        )
+    }
+
+    private append_chat_message(data: any, role: "user" | "assistant", content: string): void {
+        const chat_storage = get_storage("chat_storage")
+        if (!chat_storage) return
+
+        chat_storage.append_message(this.get_chat_session_key(data), role, content)
+    }
+
     /** 生成用户会话的唯一键 */
     private get_session_key(data: any, original_command: string): string {
         return `${data.sender.user_id}_${data.receiver.id}_${original_command}`
@@ -159,6 +207,19 @@ export class init {
                         content_to_recognize = command_keyword + (command_args ? " " + command_args : "")
                     }
                 
+                    if (contains_sensitive_content(content_to_recognize)) {
+                        send_message(
+                            data.adapter,
+                            data.instance_name,
+                            data.receiver.type,
+                            data.sender.id,
+                            [Structs.at(data.sender.user_id), Structs.text("\n该内容涉及敏感或不安全主题，无法处理。请勿发送违法或危险内容。")],
+                            data.origin_object
+                        )
+                        release_plugin_lock(user_id, 0)
+                        return
+                    }
+
                     // 检查是否超过修正次数限制（仅对自动触发生效）
                     if (!is_manual_trigger) {
                         const session_key = this.get_session_key(data, content_to_recognize)
@@ -226,13 +287,15 @@ ${available_commands_with_desc}
 
 可用命令关键字: ${available_commands}`
                         
+                        const chat_history = this.get_chat_messages(data)
                         const completion = await session.chat.completions.create({
                             model: model,
                             messages: [
                                 {
                                     role: "system",
-                                    content: "你是谨慎的命令意图助手。普通询问绝不能触发命令；只有明确、具体的执行请求才能返回 execute。严格输出指定 JSON。"
+                                    content: "你是谨慎的命令意图助手。普通询问绝不能触发命令；只有明确、具体的执行请求才能返回 execute。严格输出指定 JSON。不得提供或复述色情、未成年人相关内容、自残、暴力危险行为、违法攻击、诈骗或政治敏感内容。遇到此类内容必须返回 consult，并简洁拒绝。"
                                 },
+                                ...chat_history,
                                 {
                                     role: "user",
                                     content: prompt
@@ -254,6 +317,8 @@ ${available_commands_with_desc}
                             const answer = typeof result.answer === "string" && result.answer.trim()
                                 ? result.answer.trim()
                                 : `这看起来是在询问命令用法。如需执行，请明确输入完整命令；可使用 ${this.chat_adapter_prefix}help 查看帮助。`
+                            this.append_chat_message(data, "user", content_to_recognize)
+                            this.append_chat_message(data, "assistant", answer)
                             send_message(
                                 data.adapter,
                                 data.instance_name,
@@ -277,9 +342,12 @@ ${available_commands_with_desc}
                                 : `${this.chat_adapter_prefix}${corrected_command}`
 
                             // 通知用户命令已修正
+                            const notificationText = `已识别为命令: ${corrected_command}${corrected_args ? " " + corrected_args : ""}`
+                            this.append_chat_message(data, "user", content_to_recognize)
+                            this.append_chat_message(data, "assistant", notificationText)
                             const notification = [
                                 Structs.at(data.sender.user_id),
-                                Structs.text(`\n已识别为命令: ${corrected_command}${corrected_args ? " " + corrected_args : ""}`)
+                                Structs.text(`\n${notificationText}`)
                             ]
 
                             send_message(
@@ -315,9 +383,12 @@ ${available_commands_with_desc}
                             }, 100)
                         } else {
                             // AI 返回的命令无效，使用 help
+                            const fallbackText = `无法识别您的意图，请使用 ${this.chat_adapter_prefix}help 查看可用命令`
+                            this.append_chat_message(data, "user", content_to_recognize)
+                            this.append_chat_message(data, "assistant", fallbackText)
                             const fallback_message = [
                                 Structs.at(data.sender.user_id),
-                                Structs.text(`\n无法识别您的意图，请使用 ${this.chat_adapter_prefix}help 查看可用命令`)
+                                Structs.text(`\n${fallbackText}`)
                             ]
 
                             send_message(
@@ -332,9 +403,12 @@ ${available_commands_with_desc}
                         }
                     } catch (error: any) {
                         // AI 调用失败时的降级处理
+                        const fallbackText = `AI 识别失败，请使用 ${this.chat_adapter_prefix}help 查看可用命令`
+                        this.append_chat_message(data, "user", content_to_recognize)
+                        this.append_chat_message(data, "assistant", fallbackText)
                         const fallback_message = [
                             Structs.at(data.sender.user_id),
-                            Structs.text(`\nAI 识别失败，请使用 ${this.chat_adapter_prefix}help 查看可用命令`)
+                            Structs.text(`\n${fallbackText}`)
                         ]
                         
                         send_message(

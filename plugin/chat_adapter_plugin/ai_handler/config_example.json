@@ -4,7 +4,8 @@
   "config_template": {},
   "configs": [
     {
-      "name": "example"
+      "name": "example",
+      "history_limit": 30
     }
   ]
 }
