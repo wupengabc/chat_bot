@@ -183,7 +183,7 @@ function svgMiddleText(
         ` font-weight="${options.fontWeight ?? 400}"`,
         ` fill="${options.fill}"`,
         ` text-anchor="${options.anchor ?? 'start'}"`,
-        ' dominant-baseline="central">',
+        ' dominant-baseline="middle">',
         escapeXml(text),
         '</text>'
     ].join('');
@@ -1146,7 +1146,17 @@ export function renderCommandHelpSvg(
                 const rowX = textX + 8 + arg.depth * 16;
                 const rowWidth = contentWidth - 16 - arg.depth * 16;
                 const tagMaxWidth = Math.min(190, Math.floor(rowWidth * 0.3));
-                const tag = drawTag(arg.permissionText, rowX + rowWidth - tagMaxWidth, argY, {
+                const permissionText = ellipsisText(
+                    arg.permissionText,
+                    Math.max(1, tagMaxWidth - 20),
+                    infoSize,
+                    600
+                );
+                const tagWidth = Math.min(
+                    tagMaxWidth,
+                    Math.ceil(estimateTextWidth(permissionText, infoSize, 600) + 20)
+                );
+                const tag = drawTag(arg.permissionText, rowX + rowWidth - tagWidth, argY, {
                     maxWidth: tagMaxWidth,
                     background: arg.depth === 0 ? '#e8f1f8' : '#f4f4f1',
                     foreground: arg.depth === 0 ? '#315e7c' : '#5d665a',
@@ -1160,7 +1170,7 @@ export function renderCommandHelpSvg(
                         fill: arg.depth === 0 ? '#fbfcfa' : '#f8f7f2',
                         stroke: arg.depth === 0 ? '#d5e0d4' : '#e5e1d5',
                     }),
-                    svgTextLines(arg.lines, rowX + 10, argY + 3, infoLineHeight, {
+                    svgTextLines(arg.lines, rowX + 10, argY + Math.max(0, (rowHeight - arg.lines.length * infoLineHeight) / 2), infoLineHeight, {
                         fontFamily,
                         fontSize: infoSize,
                         fontWeight: arg.depth === 0 ? 600 : 400,
