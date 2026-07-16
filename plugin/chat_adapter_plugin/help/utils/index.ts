@@ -64,10 +64,16 @@ export interface RenderCommandHelpOptions {
     scale?: number;
 }
 
+interface PreparedArg {
+    lines: string[];
+    permissionText: string;
+    depth: number;
+}
+
 interface PreparedCommand {
     commandLines: string[];
     descriptionLines: string[];
-    argsLines: string[];
+    args: PreparedArg[];
     platformText: string;
     permissionText: string;
     height: number;
@@ -418,32 +424,45 @@ function getPermission(
     return permissionMap[key] ?? key;
 }
 
-function getArgs(
-    args: CommandHelpItem['args']
-): string {
-    if (!Array.isArray(args) || args.length === 0) {
-        return '无';
-    }
+function getPreparedArgs(
+    args: CommandHelpItem['args'],
+    contentWidth: number,
+    infoSize: number
+): PreparedArg[] {
+    const result: PreparedArg[] = [];
 
-    const list = args
-        .filter((arg) => arg?.key?.trim())
-        .map((arg) => formatHelpArg(arg));
+    const append = (arg: help_arg, depth: number) => {
+        if (!arg?.key?.trim()) {
+            return;
+        }
 
-    return list.length > 0 ? list.join('、') : '无';
-}
+        const permissionText = `权限 ${getPermission(arg.permission)}`;
+        const permissionWidth = Math.ceil(
+            estimateTextWidth(permissionText, infoSize, 600) + 20
+        );
+        const indent = depth * 16;
+        const textWidth = Math.max(100, contentWidth - indent - permissionWidth - 18);
+        const description = arg.description.trim()
+            ? `：${arg.description.trim()}`
+            : '';
+        const lines = wrapText(
+            `${'　'.repeat(depth)}${arg.key.trim()}${description}`,
+            textWidth,
+            infoSize,
+            400
+        );
 
-function formatHelpArg(arg: help_arg): string {
-    const nestedArgs = arg.args.length > 0
-        ? ` ${arg.args.map((child) => formatHelpArg(child)).join(' ')}`
-        : '';
-    const description = arg.description.trim()
-        ? `（${arg.description.trim()}）`
-        : '';
-    const permission = arg.permission > 0
-        ? `（权限等级 ${arg.permission}）`
-        : '';
+        result.push({
+            lines: lines.length > 0 ? lines : [arg.key.trim()],
+            permissionText,
+            depth,
+        });
 
-    return `${arg.key.trim()}${description}${permission}${nestedArgs}`;
+        arg.args.forEach((child) => append(child, depth + 1));
+    };
+
+    args?.forEach((arg) => append(arg, 0));
+    return result;
 }
 
 /* =========================================================
@@ -749,40 +768,28 @@ export function renderCommandHelpSvg(
                 400
             );
 
-            const argsLines = wrapText(
-                `参数：${getArgs(item.args)}`,
-                contentWidth - 18,
-                infoSize,
-                400
+            const args = getPreparedArgs(
+                item.args,
+                contentWidth - 20,
+                infoSize
             );
 
-            const safeCommandLines =
-                commandLines.length > 0
-                    ? commandLines
-                    : [commandPrefix];
+            const safeCommandLines = commandLines.length > 0
+                ? commandLines
+                : [commandPrefix];
+            const safeDescriptionLines = descriptionLines.length > 0
+                ? descriptionLines
+                : ['暂无命令描述'];
+            const platformText = `平台 ${item.platform || '通用'}`;
+            const permissionText = `权限 ${getPermission(item.permission)}`;
 
-            const safeDescriptionLines =
-                descriptionLines.length > 0
-                    ? descriptionLines
-                    : ['暂无命令描述'];
-
-            const safeArgsLines =
-                argsLines.length > 0
-                    ? argsLines
-                    : ['参数：无'];
-
-            const platformText =
-                `平台 ${item.platform || '通用'}`;
-
-            const permissionText =
-                `权限 ${getPermission(item.permission)}`;
-
-            const argsHeight = Math.max(
-                30,
-                safeArgsLines.length *
-                infoLineHeight +
-                12
-            );
+            const argsHeight = args.length > 0
+                ? args.reduce(
+                    (height, arg) =>
+                        height + Math.max(tagHeight, arg.lines.length * infoLineHeight) + 8,
+                    8
+                )
+                : 30;
 
             const height =
                 cardPaddingY * 2 +
@@ -799,7 +806,7 @@ export function renderCommandHelpSvg(
             return {
                 commandLines: safeCommandLines,
                 descriptionLines: safeDescriptionLines,
-                argsLines: safeArgsLines,
+                args,
                 platformText,
                 permissionText,
                 height
@@ -1103,12 +1110,13 @@ export function renderCommandHelpSvg(
         /*
          * 参数区域。
          */
-        const argsHeight = Math.max(
-            30,
-            item.argsLines.length *
-            infoLineHeight +
-            12
-        );
+        const argsHeight = item.args.length > 0
+            ? item.args.reduce(
+                (height, arg) =>
+                    height + Math.max(tagHeight, arg.lines.length * infoLineHeight) + 8,
+                8
+            )
+            : 30;
         svg.push(
             svgRect(
                 textX,
@@ -1118,20 +1126,45 @@ export function renderCommandHelpSvg(
                 {
                     fill: '#f3eff7'
                 }
-            ),
-            svgTextLines(
-                item.argsLines,
-                textX + 10,
-                textY + 6,
-                infoLineHeight,
-                {
+            )
+        );
+        if (item.args.length === 0) {
+            svg.push(
+                svgMiddleText('无参数', textX + 10, textY + argsHeight / 2, {
                     fontFamily,
                     fontSize: infoSize,
                     fontWeight: 400,
-                    fill: '#65506f'
-                }
-            )
-        );
+                    fill: '#65506f',
+                })
+            );
+        } else {
+            let argY = textY + 4;
+            item.args.forEach((arg) => {
+                const rowHeight = Math.max(tagHeight, arg.lines.length * infoLineHeight);
+                const naturalWidth = Math.ceil(
+                    estimateTextWidth(arg.permissionText, infoSize, 600) + 20
+                );
+                const tag = drawTag(arg.permissionText, textX + contentWidth - naturalWidth, argY, {
+                    maxWidth: Math.min(contentWidth / 2, naturalWidth),
+                    background: '#eef4f8',
+                    foreground: '#3d6280',
+                    border: '#b4c7d4',
+                    fontFamily,
+                    fontSize: infoSize,
+                    height: tagHeight,
+                });
+                svg.push(
+                    svgTextLines(arg.lines, textX + 10, argY + 3, infoLineHeight, {
+                        fontFamily,
+                        fontSize: infoSize,
+                        fontWeight: 400,
+                        fill: '#65506f',
+                    }),
+                    tag.svg
+                );
+                argY += rowHeight + 8;
+            });
+        }
         textY += argsHeight + 8;
         /*
          * 平台与权限标签。
