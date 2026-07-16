@@ -4,7 +4,7 @@ import {send_message} from "../../../chat_adapter/index.js";
 import {Structs} from "node-napcat-ts";
 import {get_ai_session} from "../../../service/ai_service/index.js";
 import {searchMarkdown} from "../../../service/net/search.js";
-import {fetchMarkdown} from "../../../service/net/fetch.js";
+import {searchMinecraftWiki, fetchMinecraftWikiPage} from "../../../service/net/minecraft_wiki.js";
 import {get_storage} from "../../../storage/index.js";
 import type {ChatSessionKey, StoredChatMessage} from "../../../storage/chat_storage/index.js";
 
@@ -295,7 +295,7 @@ ${available_commands_with_desc}
 - 只有用户明确要求执行具体操作，且参数足够时，intent 才能是 execute。
 - 包含“怎么、如何、是否、能否、会不会、是什么、多少钱、需要什么权限”等咨询含义时，intent 必须是 consult，不得执行命令。
 - 无法确定时按 consult 处理。
-- consult 时直接回答用户的问题；不要声称已经执行。对于已提供的“联网搜索结果”，必须基于结果回答。涉及游戏机制、物品获取、配方、掉落、版本差异等可验证事实时，必须先调用 fetch_markdown 交叉核实至少两个搜索结果中的安全具体网页；若可靠网页不足两个，必须明确说明无法充分核实，不得猜测。不要自行列出网址，系统会附上已使用且安全的网址。
+- consult 时直接回答用户的问题；不要声称已经执行。对于 Minecraft 相关问题，必须优先使用已提供的 Minecraft Wiki 内容核实；其他问题只能基于已提供的 Bing 搜索结果回答。不要自行列出网址，系统会附上已使用且安全的网址。
 - execute 时 command 必须是可用命令关键字，args 是参数字符串。
 
 只返回单行 JSON，不要 Markdown：
@@ -307,22 +307,27 @@ ${available_commands_with_desc}
                         const chat_history = this.get_chat_messages(data)
                         const usedUrls: string[] = []
                         let searchContext = ""
-                        let verificationContext = ""
+                        let wikiContext = ""
                         try {
                             searchContext = (await searchMarkdown(content_to_recognize)).slice(0, 12000)
-                            const verificationUrls = get_safe_search_urls(searchContext)
-                            const verifiedPages = await Promise.all(verificationUrls.map(async url => {
-                                try {
-                                    const markdown = await fetchMarkdown(url)
-                                    usedUrls.push(url)
-                                    return `网页: ${url}\n${markdown.slice(0, 6000)}`
-                                } catch (error: any) {
-                                    return `网页访问失败: ${url} (${error.message || String(error)})`
-                                }
-                            }))
-                            verificationContext = verifiedPages.join("\n\n")
                         } catch (error: any) {
                             searchContext = `联网搜索失败: ${error.message || String(error)}`
+                        }
+                        try {
+                            const wikiResults = await searchMinecraftWiki(content_to_recognize)
+                            const wikiPages = await Promise.all(wikiResults.map(async result => {
+                                if (!result.title) return ""
+                                try {
+                                    const markdown = await fetchMinecraftWikiPage(result.title)
+                                    if (result.url) usedUrls.push(result.url)
+                                    return `页面标题: ${result.title}\n${markdown.slice(0, 6000)}`
+                                } catch (error: any) {
+                                    return `Minecraft Wiki 页面获取失败: ${result.title} (${error.message || String(error)})`
+                                }
+                            }))
+                            wikiContext = wikiPages.filter(Boolean).join("\n\n")
+                        } catch (error: any) {
+                            wikiContext = `Minecraft Wiki 搜索失败: ${error.message || String(error)}`
                         }
                         const messages: any[] = [
                             {
@@ -332,7 +337,7 @@ ${available_commands_with_desc}
                             ...chat_history,
                             {
                                 role: "user",
-                                content: `${prompt}\n\n联网搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\n已交叉核实的网页内容：\n${verificationContext || "未能获取可供核实的网页内容。"}`
+                                content: `${prompt}\n\nBing 搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\nMinecraft Wiki 内容（Minecraft 问题优先使用；若内容为搜索失败则忽略）：\n${wikiContext || "未能获取 Minecraft Wiki 内容。"}`
                             }
                         ]
                         const completion = await session.chat.completions.create({
