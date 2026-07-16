@@ -2,6 +2,7 @@ interface WikiSearchResult {
     title?: string;
     url?: string;
     snippet?: string;
+    namespace?: string;
 }
 
 interface WikiSearchResponse {

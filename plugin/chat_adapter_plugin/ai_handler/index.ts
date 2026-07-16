@@ -306,12 +306,18 @@ ${available_commands_with_desc}
 可用命令关键字: ${available_commands}`
                         
                         const chat_history = this.get_chat_messages(data)
+                        const previousUserQuestion = [...chat_history]
+                            .reverse()
+                            .find(message => message.role === "user")?.content ?? ""
+                        const researchQuery = previousUserQuestion
+                            ? `${previousUserQuestion}\n补充信息：${content_to_recognize}`
+                            : content_to_recognize
                         const usedUrls: string[] = []
                         let searchContext = ""
                         let crawledContext = ""
                         let wikiContext = ""
                         try {
-                            searchContext = (await searchMarkdown(content_to_recognize)).slice(0, 12000)
+                            searchContext = (await searchMarkdown(researchQuery)).slice(0, 12000)
                             const resultUrls = get_safe_search_urls(searchContext)
                             const crawledPages = await Promise.all(resultUrls.map(async url => {
                                 try {
@@ -327,27 +333,45 @@ ${available_commands_with_desc}
                             searchContext = `联网搜索失败: ${error.message || String(error)}`
                         }
                         try {
-                            const wikiResults = await searchMinecraftWiki(content_to_recognize)
-                            const wikiCandidateList = wikiResults
-                                .map((result, index) => `${index + 1}. 标题: ${result.title || "未知"}\n摘要: ${result.snippet || "无"}\n网址: ${result.url || "无"}`)
-                                .join("\n\n")
-                            const selection = await session.chat.completions.create({
+                            const keywordCompletion = await session.chat.completions.create({
                                 model,
                                 temperature: 0,
-                                max_tokens: 20,
+                                max_tokens: 30,
                                 messages: [
-                                    {role: "system", content: "你是 Minecraft Wiki 搜索结果选择器。只输出与用户问题最相关的一个结果编号；若没有相关结果，只输出 0。"},
-                                    {role: "user", content: `用户问题: ${content_to_recognize}\n\n搜索结果:\n${wikiCandidateList}`}
+                                    {role: "system", content: "你是 Minecraft Wiki 检索词提取器。根据用户问题，只输出最可能对应的一个 Minecraft 中文词条名称，不要解释、标点或其他文字；无法判断时输出 0。"},
+                                    {role: "user", content: researchQuery}
                                 ]
                             })
-                            const selectedIndex = Number.parseInt(selection.choices[0]?.message?.content?.trim() || "0", 10) - 1
-                            const selectedResult = wikiResults[selectedIndex]
-                            if (selectedResult?.title) {
-                                const markdown = await fetchMinecraftWikiPage(selectedResult.title)
-                                if (selectedResult.url) usedUrls.push(selectedResult.url)
-                                wikiContext = `页面标题: ${selectedResult.title}\n${markdown.slice(0, 12000)}`
+                            const wikiKeyword = keywordCompletion.choices[0]?.message?.content?.trim().replace(/[\r\n]/g, "") || ""
+                            if (!wikiKeyword || wikiKeyword === "0") {
+                                wikiContext = "无法从问题中提取 Minecraft Wiki 词条。"
                             } else {
-                                wikiContext = "Minecraft Wiki 未找到与问题相关的页面。"
+                                const wikiResults = await searchMinecraftWiki(wikiKeyword)
+                                const exactResult = wikiResults.find(result => result.title === wikiKeyword && result.namespace === "Main")
+                                const wikiCandidateList = wikiResults
+                                    .map((result, index) => `${index + 1}. 标题: ${result.title || "未知"}\n命名空间: ${result.namespace || "未知"}\n摘要: ${result.snippet || "无"}\n网址: ${result.url || "无"}`)
+                                    .join("\n\n")
+                                let selectedResult = exactResult
+                                if (!selectedResult && wikiResults.length > 0) {
+                                    const selection = await session.chat.completions.create({
+                                        model,
+                                        temperature: 0,
+                                        max_tokens: 20,
+                                        messages: [
+                                            {role: "system", content: "你是 Minecraft Wiki 搜索结果选择器。只输出与检索词和用户问题最相关的一个结果编号；若没有相关结果，只输出 0。优先选择 Main 命名空间和标题最接近检索词的结果。"},
+                                            {role: "user", content: `用户问题: ${researchQuery}\n检索词: ${wikiKeyword}\n\n搜索结果:\n${wikiCandidateList}`}
+                                        ]
+                                    })
+                                    const selectedIndex = Number.parseInt(selection.choices[0]?.message?.content?.trim() || "0", 10) - 1
+                                    selectedResult = wikiResults[selectedIndex]
+                                }
+                                if (selectedResult?.title) {
+                                    const markdown = await fetchMinecraftWikiPage(selectedResult.title)
+                                    if (selectedResult.url) usedUrls.push(selectedResult.url)
+                                    wikiContext = `检索词: ${wikiKeyword}\n页面标题: ${selectedResult.title}\n${markdown.slice(0, 12000)}`
+                                } else {
+                                    wikiContext = `Minecraft Wiki 未找到与“${wikiKeyword}”相关的页面。`
+                                }
                             }
                         } catch (error: any) {
                             wikiContext = `Minecraft Wiki 搜索失败: ${error.message || String(error)}`
