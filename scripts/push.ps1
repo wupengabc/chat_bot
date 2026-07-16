@@ -47,12 +47,13 @@ function Push-Repository {
     foreach ($remote in @("origin", "gitee")) {
         git -C $repoRoot remote get-url $remote 1>$null 2>$null
         if ($LASTEXITCODE -ne 0) {
-            throw "未找到 Git 远程仓库: $remote"
+            Write-Warning "未找到 Git 远程仓库: $remote，跳过推送"
+            continue
         }
         Write-Host "[push.ps1] 正在推送 $branch 到 $remote..." -ForegroundColor Cyan
         git -C $repoRoot push @forceArgs $remote $branch
         if ($LASTEXITCODE -ne 0) {
-            throw "推送 $remote 失败 (exit code: $LASTEXITCODE)"
+            Write-Warning "推送 $remote 失败 (exit code: $LASTEXITCODE)，继续推送其他远程仓库"
         }
     }
 }

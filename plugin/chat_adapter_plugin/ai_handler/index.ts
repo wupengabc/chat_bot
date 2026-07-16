@@ -280,7 +280,7 @@ ${available_commands_with_desc}
 - 只有用户明确要求执行具体操作，且参数足够时，intent 才能是 execute。
 - 包含“怎么、如何、是否、能否、会不会、是什么、多少钱、需要什么权限”等咨询含义时，intent 必须是 consult，不得执行命令。
 - 无法确定时按 consult 处理。
-- consult 时直接回答用户的问题；不要声称已经执行。需要查询最新网络信息或网页内容时，可先调用提供的工具。
+- consult 时直接回答用户的问题；不要声称已经执行。对于已提供的“联网搜索结果”，必须基于结果回答；若搜索摘要的信息不足、互相矛盾或需要核实细节，可从其中的安全链接调用 fetch_markdown 访问具体网页后再回答。不要自行列出网址，系统会附上已使用且安全的网址。
 - execute 时 command 必须是可用命令关键字，args 是参数字符串。
 
 只返回单行 JSON，不要 Markdown：
@@ -290,6 +290,16 @@ ${available_commands_with_desc}
 可用命令关键字: ${available_commands}`
                         
                         const chat_history = this.get_chat_messages(data)
+                        const usedUrls: string[] = []
+                        let searchContext = ""
+                        try {
+                            const searchUrl = new URL("https://www.bing.com/search")
+                            searchUrl.searchParams.set("q", content_to_recognize)
+                            usedUrls.push(searchUrl.href)
+                            searchContext = (await searchMarkdown(content_to_recognize)).slice(0, 12000)
+                        } catch (error: any) {
+                            searchContext = `联网搜索失败: ${error.message || String(error)}`
+                        }
                         const messages: any[] = [
                             {
                                 role: "system",
@@ -298,7 +308,7 @@ ${available_commands_with_desc}
                             ...chat_history,
                             {
                                 role: "user",
-                                content: prompt
+                                content: `${prompt}\n\n联网搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}`
                             }
                         ]
                         const tools = [
@@ -319,7 +329,7 @@ ${available_commands_with_desc}
                                 type: "function" as const,
                                 function: {
                                     name: "fetch_markdown",
-                                    description: "获取指定网页并返回转换后的 Markdown。",
+                                    description: "获取 Bing 搜索结果中或用户明确提供的安全网页并返回转换后的 Markdown；仅在搜索摘要不足、矛盾或需要核实时调用。",
                                     parameters: {
                                         type: "object",
                                         properties: {url: {type: "string", description: "需要访问的 http 或 https 网址"}},
@@ -356,12 +366,19 @@ ${available_commands_with_desc}
                                     }
                                     const args = JSON.parse(toolCall.function.arguments) as {query?: unknown, url?: unknown}
                                     if (toolCall.function.name === "search_markdown" && typeof args.query === "string") {
+                                        const searchUrl = new URL("https://www.bing.com/search")
+                                        searchUrl.searchParams.set("q", args.query)
+                                        usedUrls.push(searchUrl.href)
                                         toolResult = await searchMarkdown(args.query)
                                     } else if (toolCall.function.name === "fetch_markdown" && typeof args.url === "string") {
                                         const url = new URL(args.url)
                                         if (url.protocol !== "http:" && url.protocol !== "https:") {
                                             throw new Error("仅支持 http 和 https 网址")
                                         }
+                                        if (contains_sensitive_content(url.href)) {
+                                            throw new Error("不允许访问敏感网址")
+                                        }
+                                        usedUrls.push(url.href)
                                         toolResult = await fetchMarkdown(url.href)
                                     } else {
                                         throw new Error("无效的工具调用参数")
@@ -387,14 +404,19 @@ ${available_commands_with_desc}
                             const answer = typeof result.answer === "string" && result.answer.trim()
                                 ? result.answer.trim()
                                 : `这看起来是在询问命令用法。如需执行，请明确输入完整命令；可使用 ${this.chat_adapter_prefix}help 查看帮助。`
+                            const safeUrls = [...new Set(usedUrls)]
+                                .filter(url => !contains_sensitive_content(url))
+                            const answerWithSources = safeUrls.length > 0
+                                ? `${answer}\n\n使用的网址:\n${safeUrls.map(url => `- ${url}`).join("\n")}`
+                                : answer
                             this.append_chat_message(data, "user", content_to_recognize)
-                            this.append_chat_message(data, "assistant", answer)
+                            this.append_chat_message(data, "assistant", answerWithSources)
                             send_message(
                                 data.adapter,
                                 data.instance_name,
                                 data.receiver.type,
                                 data.sender.id,
-                                [Structs.at(data.sender.user_id), Structs.text(`\n${answer}`)],
+                                [Structs.at(data.sender.user_id), Structs.text(`\n${answerWithSources}`)],
                                 data.origin_object
                             )
                             release_plugin_lock(user_id, 0)
