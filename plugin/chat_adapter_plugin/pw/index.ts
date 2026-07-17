@@ -8,6 +8,13 @@ import {help} from "../../type.js"
 type Landmark = {name: string, description: string, owner: string, visits: number, price: string, item_id: string}
 type LandmarkRow = Landmark & {updated_at?: string}
 
+export function parseLandmarkVisits(text: string): number {
+    const value = text.match(/\[访问人数\]\s*([\d\s,，._]+)/)?.[1]
+    if (!value) return 0
+    const digits = value.replace(/[^\d]/g, "")
+    return digits ? Number(digits) : 0
+}
+
 export class init {
     public help: help = {
         name: "pw", keyword: "pw", description: "同步和查询服务器地标", permission: 0,
@@ -228,7 +235,7 @@ export class init {
                     else if (collecting && text.includes("[传送价格]")) collecting = false
                     else if (collecting && text) description += `${description === "None" ? "" : " "}${text}`
                     if (text.includes("[地标主人]")) owner = text.replace(/^.*\[地标主人\]\s*/, "").trim()
-                    if (text.includes("[访问人数]")) visits = Number(text.match(/\[访问人数\]\s*(\d+)/)?.[1] || 0)
+                    if (text.includes("[访问人数]")) visits = parseLandmarkVisits(text)
                     if (text.includes("[传送价格]")) price = text.replace(/^.*\[传送价格\]\s*/, "") || "None"
                 }
                 const item_id = custom_data?.data?.value?.PublicBukkitValues?.value?.["playerwarps:itemtag_item"]?.value

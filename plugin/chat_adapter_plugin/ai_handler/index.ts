@@ -1,5 +1,5 @@
 import {help} from "../../type.js";
-import {get_chat_adapter_prefix, help_list, plugin_handle_adapter_event, acquire_plugin_lock, release_plugin_lock} from "../../index.js";
+import {get_chat_adapter_prefix, help_list, plugin_handle_adapter_event, acquire_plugin_lock, release_plugin_lock, plugin_logger} from "../../index.js";
 import {send_message} from "../../../chat_adapter/index.js";
 import {Structs} from "node-napcat-ts";
 import {get_ai_session} from "../../../service/ai_service/index.js";
@@ -8,6 +8,7 @@ import {fetchMarkdown} from "../../../service/net/fetch.js";
 import {searchMinecraftWiki, fetchMinecraftWikiPage} from "../../../service/net/minecraft_wiki.js";
 import {get_storage} from "../../../storage/index.js";
 import type {ChatSessionKey, StoredChatMessage} from "../../../storage/chat_storage/index.js";
+import {buildMultimodalContent, loadCqImages} from "./image_input.js";
 
 const SENSITIVE_PATTERNS: RegExp[] = [
     // 色情、未成年人、自残与暴力危险行为
@@ -376,6 +377,11 @@ ${available_commands_with_desc}
                         } catch (error: any) {
                             wikiContext = `Minecraft Wiki 搜索失败: ${error.message || String(error)}`
                         }
+                        const finalPrompt = `${prompt}\n\nBing 搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\nBing 搜索结果的已抓取网页内容：\n${crawledContext || "未能抓取安全的搜索结果网页。"}\n\nMinecraft Wiki 内容（Minecraft 问题优先使用；若内容为搜索失败则忽略）：\n${wikiContext || "未能获取 Minecraft Wiki 内容。"}`
+                        const imageDataUrls = await loadCqImages(content_to_recognize, (index, error) => {
+                            const reason = error instanceof Error ? error.message : String(error)
+                            plugin_logger("ai_handler", `第 ${index} 张图片加载失败，已跳过: ${reason}`, "warn")
+                        })
                         const messages: any[] = [
                             {
                                 role: "system",
@@ -384,7 +390,7 @@ ${available_commands_with_desc}
                             ...chat_history,
                             {
                                 role: "user",
-                                content: `${prompt}\n\nBing 搜索结果（仅用于回答咨询；若内容为搜索失败则忽略）：\n${searchContext}\n\nBing 搜索结果的已抓取网页内容：\n${crawledContext || "未能抓取安全的搜索结果网页。"}\n\nMinecraft Wiki 内容（Minecraft 问题优先使用；若内容为搜索失败则忽略）：\n${wikiContext || "未能获取 Minecraft Wiki 内容。"}`
+                                content: buildMultimodalContent(finalPrompt, imageDataUrls)
                             }
                         ]
                         const completion = await session.chat.completions.create({
