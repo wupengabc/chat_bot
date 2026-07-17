@@ -807,6 +807,50 @@ export class init {
         return this.database.prepare("DELETE FROM shop_price WHERE batch_id = ?").run(batch_id).changes
     }
 
+    clear_landmarks() {
+        return this.database.prepare("DELETE FROM landmark").run().changes
+    }
+
+    insert_landmark_page(landmarks: Array<{name: string, description: string, owner: string, visits: number, price: string, item_id?: string}>) {
+        if (!Array.isArray(landmarks)) return {success: false as const, message: "地标页面数据无效"}
+        const rows = landmarks.map(landmark => ({
+            name: landmark.name?.trim(), description: landmark.description?.trim() || "None",
+            owner: landmark.owner?.trim(), visits: Math.max(0, Math.floor(Number(landmark.visits) || 0)),
+            price: landmark.price?.trim() || "None", item_id: landmark.item_id?.trim() || ""
+        }))
+        if (rows.some(row => !row.name || !row.owner || row.name.length > 128 || row.owner.length > 64 || row.description.length > 2000 || row.price.length > 128 || row.item_id.length > 256)) {
+            return {success: false as const, message: "地标数据包含无效字段"}
+        }
+        const batch_id = crypto.randomUUID()
+        const now = new Date().toISOString()
+        const normalize = (value: string) => value.trim().toLocaleLowerCase()
+        return this.database.transaction(() => {
+            const find = this.database.prepare("SELECT id FROM landmark WHERE owner_key = ? AND name_key = ?")
+            const insert = this.database.prepare("INSERT INTO landmark (name, name_key, description, owner, owner_key, visits, price, item_id, batch_id, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            const update = this.database.prepare("UPDATE landmark SET name = ?, description = ?, owner = ?, visits = ?, price = ?, item_id = ?, batch_id = ?, updated_at = ? WHERE id = ?")
+            const seen = new Set<string>()
+            let inserted = 0
+            let updated = 0
+            for (const row of rows) {
+                const name_key = normalize(row.name!)
+                const owner_key = normalize(row.owner!)
+                const key = `${owner_key}\u0000${name_key}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                const current = find.get(owner_key, name_key) as {id: number} | undefined
+                if (current) {
+                    update.run(row.name, row.description, row.owner, row.visits, row.price, row.item_id, batch_id, now, current.id)
+                    updated++
+                } else {
+                    insert.run(row.name, name_key, row.description, row.owner, owner_key, row.visits, row.price, row.item_id, batch_id, now, now)
+                    inserted++
+                }
+            }
+            const total = (this.database.prepare("SELECT COUNT(*) AS count FROM landmark").get() as {count: number}).count
+            return {success: true as const, inserted, updated, total}
+        })()
+    }
+
     sync_landmarks(landmarks: Array<{name: string, description: string, owner: string, visits: number, price: string, item_id?: string}>) {
         if (!Array.isArray(landmarks) || landmarks.length === 0) return {success: false as const, message: "没有读取到有效地标"}
         const rows = landmarks.map(landmark => ({

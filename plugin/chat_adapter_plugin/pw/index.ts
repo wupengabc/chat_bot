@@ -68,12 +68,20 @@ export class init {
         let started = false
         const accepted = await instance.execute_single_task(async () => {
             started = true
-            this.reply(data, `正在${flags.includes("--dry-run") ? "预览" : "更新"}全部地标，最多等待 90 秒……`)
-            const landmarks = await this.get_all_landmarks(instance)
-            if (flags.includes("--dry-run")) return this.reply(data, `地标预览完成：共读取 ${landmarks.length} 条有效地标，未写入数据表`)
-            const result = storage.sync_landmarks(landmarks)
-            if (!result.success) throw new Error(result.message)
-            this.reply(data, `地标更新完成\n共 ${result.total} 条；新增 ${result.inserted} 条；更新 ${result.updated} 条；删除 ${result.deleted} 条`)
+            const dry_run = flags.includes("--dry-run")
+            this.reply(data, `正在${dry_run ? "预览" : "更新"}全部地标，最多等待 10 分钟……`)
+            let inserted_pages = 0
+            let database_total = 0
+            if (!dry_run) storage.clear_landmarks()
+            const landmarks = await this.get_all_landmarks(instance, dry_run ? undefined : page_landmarks => {
+                const result = storage.insert_landmark_page(page_landmarks)
+                if (!result.success) throw new Error(result.message)
+                inserted_pages++
+                database_total = result.total
+                return database_total
+            })
+            if (dry_run) return this.reply(data, `地标预览完成：共读取 ${landmarks.length} 条有效地标，未写入数据表`)
+            this.reply(data, `地标更新完成\n共写入 ${inserted_pages} 页，当前 ${database_total} 条地标`)
         }, false)
         if (!accepted && !started) this.reply(data, "已有游戏任务正在运行，请稍后再试")
     }
@@ -124,18 +132,22 @@ export class init {
         this.reply(data, `地标统计\n地标总数：${result.total}\n地标主人：${result.owners}\n累计访问：${result.visits}\n最近同步：${result.updated_at || "暂无"}`)
     }
 
-    private get_all_landmarks(instance: any): Promise<Landmark[]> {
+    private get_all_landmarks(instance: any, insert_page?: (landmarks: Landmark[]) => number): Promise<Landmark[]> {
         const bot = instance.bot
         return new Promise((resolve, reject) => {
             const landmarks: Landmark[] = []
             let is_first_page = true
+            let page = 0
             let finished = false
-            let window_timer: NodeJS.Timeout | undefined
-            let last_window: any
-            const total_timer = setTimeout(() => finish(new Error("获取地标信息超时")), 90_000)
+            let next_page_timer: NodeJS.Timeout | undefined
+            const click_timers = new Set<NodeJS.Timeout>()
+            const total_timer = setTimeout(() => finish(new Error("获取地标信息超时")), 600_000)
             const cleanup = () => {
                 clearTimeout(total_timer)
-                if (window_timer) clearInterval(window_timer)
+                if (next_page_timer) clearTimeout(next_page_timer)
+                for (const timer of click_timers) clearTimeout(timer)
+                click_timers.clear()
+                bot.removeListener("windowOpen", handle_window_open)
                 bot.removeListener("end", handle_end)
                 bot.removeListener("error", handle_error)
                 if (bot.currentWindow) bot.closeWindow(bot.currentWindow)
@@ -150,25 +162,44 @@ export class init {
             }
             const handle_end = () => finish(new Error("Bot 已断开连接"))
             const handle_error = (error: any) => finish(new Error(`Bot 协议错误: ${error?.message || error}`))
-            const check_current_window = () => {
+            const schedule_click = (delay: number, click: () => Promise<void>) => {
+                const timer = setTimeout(() => {
+                    click_timers.delete(timer)
+                    if (!finished) click()
+                }, delay)
+                click_timers.add(timer)
+            }
+            const handle_window_open = (window: any) => {
                 if (finished) return
-                const window = bot.currentWindow || bot.inventory
-                if (!window || window === last_window) return
-                last_window = window
-
-                // 每秒检查 currentWindow：首次窗口进入地标列表，后续窗口解析并翻页。
+                if (next_page_timer) {
+                    clearTimeout(next_page_timer)
+                    next_page_timer = undefined
+                }
                 if (is_first_page) {
                     is_first_page = false
-                    setTimeout(() => bot.clickWindow(47, 0, 0)
-                        .catch(() => finish(new Error("进入地标列表失败"))), 500)
+                    schedule_click(500, () => bot.clickWindow(47, 0, 0)
+                        .catch(() => finish(new Error("进入地标列表失败"))))
                     return
                 }
-                landmarks.push(...this.parse_landmark_nbt(window))
-                setTimeout(() => bot.clickWindow(50, 1, 0).catch(() => finish()), 500)
+                try {
+                    const page_landmarks = this.parse_landmark_nbt(window)
+                    landmarks.push(...page_landmarks)
+                    page += 1
+                    const database_total = insert_page?.(page_landmarks)
+                    plugin_logger("pw", insert_page
+                        ? `已读取地标第 ${page} 页：本页 ${page_landmarks.length} 条，数据库当前 ${database_total} 条`
+                        : `已预览地标第 ${page} 页：本页 ${page_landmarks.length} 条，累计 ${landmarks.length} 条`, "info")
+                    schedule_click(1_000, () => {
+                        next_page_timer = setTimeout(() => finish(), 10_000)
+                        return bot.clickWindow(50, 1, 0).catch(() => finish())
+                    })
+                } catch (error: any) {
+                    finish(new Error(`写入地标页面失败: ${error?.message || error}`))
+                }
             }
+            bot.on("windowOpen", handle_window_open)
             bot.on("end", handle_end)
             bot.on("error", handle_error)
-            window_timer = setInterval(check_current_window, 1_000)
             if (!instance.send_message("/pw")) finish(new Error("Bot暂未连接至服务器"))
         })
     }
@@ -177,13 +208,19 @@ export class init {
         const landmarks: Landmark[] = []
         for (const slot of window_data?.slots || []) {
             try {
+                const get_component = (type: string) => slot?.componentMap?.get?.(type)
+                    || slot?.components?.find((component: any) => component.type === type)
+                const custom_name = get_component("custom_name")
+                const lore_component = get_component("lore")
+                const custom_data = get_component("custom_data")
                 const display = slot?.nbt?.value?.display?.value
-                if (!display?.Name?.value || !display?.Lore?.value?.value) continue
-                const name = this.extract_text(JSON.parse(display.Name.value)).trim()
-                const lore = display.Lore.value.value as string[]
+                const name_data = custom_name?.data ?? display?.Name?.value
+                const lore = lore_component?.data ?? display?.Lore?.value?.value
+                if (!name_data || !Array.isArray(lore)) continue
+                const name = this.extract_text(this.parse_text_data(name_data)).trim()
                 let description = "None", owner = "", visits = 0, price = "None", collecting = false
                 for (const line of lore) {
-                    const text = this.extract_text(JSON.parse(line)).trim()
+                    const text = this.extract_text(this.parse_text_data(line)).trim()
                     if (text.includes("[地标介绍]")) {
                         description = text.replace(/^.*\[地标介绍\]\s*/, "") || "None"; collecting = true
                     } else if (collecting && text.includes("[地标主人]")) collecting = false
@@ -194,14 +231,32 @@ export class init {
                     if (text.includes("[访问人数]")) visits = Number(text.match(/\[访问人数\]\s*(\d+)/)?.[1] || 0)
                     if (text.includes("[传送价格]")) price = text.replace(/^.*\[传送价格\]\s*/, "") || "None"
                 }
-                if (name && owner) landmarks.push({name, description, owner, visits, price, item_id: slot.nbt.value.PublicBukkitValues?.value?.["playerwarps:itemtag_item"]?.value || ""})
+                const item_id = custom_data?.data?.value?.PublicBukkitValues?.value?.["playerwarps:itemtag_item"]?.value
+                    ?? slot?.nbt?.value?.PublicBukkitValues?.value?.["playerwarps:itemtag_item"]?.value
+                    ?? ""
+                if (name && owner) landmarks.push({name, description, owner, visits, price, item_id})
             } catch { /* 忽略非地标物品或无效 NBT */ }
         }
         return landmarks
     }
 
+    private parse_text_data(data: any): any {
+        if (typeof data !== "string") return data
+        try {
+            return JSON.parse(data)
+        } catch {
+            return data
+        }
+    }
+
     private extract_text(json: any): string {
-        return `${json?.text || ""}${Array.isArray(json?.extra) ? json.extra.map((item: any) => this.extract_text(item)).join("") : ""}`
+        if (json === null || json === undefined) return ""
+        if (typeof json === "string" || typeof json === "number") return String(json)
+        if (Array.isArray(json)) return json.map(item => this.extract_text(item)).join("")
+        if (json.type === "string") return String(json.value ?? "")
+        if (json.type === "compound") return this.extract_text(json.value)
+        if (json.type === "list") return this.extract_text(json.value?.value ?? json.value)
+        return `${this.extract_text(json.text)}${this.extract_text(json.extra)}`
     }
 
     private format_rows(rows: LandmarkRow[], detail: boolean): string {
