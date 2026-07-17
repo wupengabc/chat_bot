@@ -46,6 +46,14 @@ export function is_dispatchable_correction(command: string, handler_command: str
     return command !== handler_command && commands.includes(command)
 }
 
+export function selectAnswerSourceUrls(sources: unknown, fetchedUrls: string[]): string[] {
+    if (!Array.isArray(sources)) return []
+    const allowed = new Set(fetchedUrls)
+    return [...new Set(sources.filter((url): url is string =>
+        typeof url === "string" && allowed.has(url) && !contains_sensitive_content(url)
+    ))]
+}
+
 export class init {
     public help: help = {
         name: "ai_handler",
@@ -297,12 +305,12 @@ ${available_commands_with_desc}
 - 只有用户明确要求执行具体操作，且参数足够时，intent 才能是 execute。
 - 包含“怎么、如何、是否、能否、会不会、是什么、多少钱、需要什么权限”等咨询含义时，intent 必须是 consult，不得执行命令。
 - 无法确定时按 consult 处理。
-- consult 时直接回答用户的问题；不要声称已经执行。必须基于已提供的 Bing 搜索结果和网页核实内容回答；Minecraft 相关问题优先使用 Minecraft Wiki 内容。不要自行列出网址，系统会附上已使用且安全的网址。
+- consult 时直接回答用户的问题；不要声称已经执行。只有回答实际使用了提供的网页或 Wiki 内容时，才把对应的完整网址放入 sources；未使用网页内容、仅识别图片或根据常识回答时 sources 必须为空数组。不要在 answer 中自行列出网址。
 - execute 时 command 必须是可用命令关键字，args 是参数字符串。
 
 只返回单行 JSON，不要 Markdown：
 执行：{"intent":"execute","command":"命令关键字","args":"参数"}
-咨询：{"intent":"consult","answer":"简洁回答；必要时给出可供用户手动发送的完整命令"}
+咨询：{"intent":"consult","answer":"简洁回答；必要时给出可供用户手动发送的完整命令","sources":["实际引用的完整网址"]}
 
 可用命令关键字: ${available_commands}`
                         
@@ -400,7 +408,7 @@ ${available_commands_with_desc}
                             max_tokens: 400
                         })
                         const result_text = completion.choices[0]?.message?.content?.trim() || ""
-                                                let result: {intent?: string, command?: string, args?: string, answer?: string}
+                                                let result: {intent?: string, command?: string, args?: string, answer?: string, sources?: unknown}
                         try {
                             result = JSON.parse(result_text)
                         } catch {
@@ -413,8 +421,7 @@ ${available_commands_with_desc}
                             const answer = typeof result.answer === "string" && result.answer.trim()
                                 ? result.answer.trim()
                                 : `这看起来是在询问命令用法。如需执行，请明确输入完整命令；可使用 ${this.chat_adapter_prefix}help 查看帮助。`
-                            const safeUrls = [...new Set(usedUrls)]
-                                .filter(url => !contains_sensitive_content(url))
+                            const safeUrls = selectAnswerSourceUrls(result.sources, usedUrls)
                             const answerWithSources = safeUrls.length > 0
                                 ? `${answer}\n\n使用的网址:\n${safeUrls.map(url => `- ${url}`).join("\n")}`
                                 : answer
