@@ -1,0 +1,20 @@
+{
+  "name": "受保护世界地图",
+  "description": "固定世界地图的访问名单、公开世界信息与仅服务端可读的种子配置。",
+  "config_template": {
+    "enabled": {"type": "boolean", "default": false, "description": "启用用户端世界地图入口"},
+    "allowed_usernames": {"type": "string_list", "default": [], "description": "允许访问世界地图的 Minecraft 用户名；管理员和所有者始终可访问"},
+    "renderer_source_path": {"type": "text", "default": "", "description": "可选的地图计算源覆盖目录；留空使用仓库内置 service/world_map/vendor/seed-map。仅服务端读取，不会暴露给浏览器"},
+    "world_seeds": {"type": "object", "name": "世界种子", "description": "仅管理员可录入，读取时不会返回。每项以公开 world ID 为字段名，填写对应的 64 位 Java 种子；留空不会覆盖已保存种子。", "default": {"survival-1": {"type": "text", "input_type": "text", "sensitive": true, "name": "生存一区种子"}, "survival-2": {"type": "text", "input_type": "text", "sensitive": true, "name": "生存二区种子"}, "resources": {"type": "text", "input_type": "text", "sensitive": true, "name": "资源大区种子"}}},
+    "worlds": {"type": "array", "name": "世界列表", "item_template": {"id": {"type": "text", "name": "世界 ID", "default": ""}, "name": {"type": "text", "name": "显示名称", "default": ""}, "minecraftVersion": {"type": "single_select", "name": "游戏版本", "default": "java_1_21", "options": ["java_1_20", "java_1_21", "java_1_21_2", "java_1_21_4", "java_1_21_5", "java_1_21_6", "java_1_21_9", "java_26_1", "java_26_2", "java_26_3"]}, "enabled": {"type": "boolean", "name": "启用状态", "default": true}}, "default": [{"id": "survival-1", "name": "生存一区", "minecraftVersion": "java_1_21", "enabled": true}, {"id": "survival-2", "name": "生存二区", "minecraftVersion": "java_1_21", "enabled": true}, {"id": "resources", "name": "资源大区", "minecraftVersion": "java_1_21", "enabled": true}], "description": "配置公开世界 ID、显示名称、生成版本与启用状态；种子必须在上方世界种子中单独填写"}
+  },
+  "enabled": false,
+  "allowed_usernames": [],
+  "renderer_source_path": "",
+  "world_seeds": {},
+  "worlds": [
+    {"id": "survival-1", "name": "生存一区", "minecraftVersion": "java_1_21", "enabled": true},
+    {"id": "survival-2", "name": "生存二区", "minecraftVersion": "java_1_21", "enabled": true},
+    {"id": "resources", "name": "资源大区", "minecraftVersion": "java_1_21", "enabled": true}
+  ]
+}

@@ -12,4 +12,5 @@ export interface help {
     permission: number;
     args: help_arg[];
     platform: string;
+    is_visible?: (data: any) => boolean;
 }

@@ -1,4 +1,4 @@
-import {Structs} from "node-napcat-ts"
+import {message as Structs} from "@snowluma/sdk"
 import {send_message} from "../../../chat_adapter/index.js"
 import {get_storage} from "../../../storage/index.js"
 import {log_utils} from "../../../utils/log_utils.js"
@@ -7,7 +7,7 @@ import {help} from "../../type.js"
 import {parseLogArgs, resolveLogAccess} from "./logic.js"
 const currentUrl = new URL(import.meta.url)
 const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
-const utilsUrl = new URL("./utils/index.js", import.meta.url)
+const utilsUrl = new URL("./utils/index.ts", import.meta.url)
 utilsUrl.searchParams.set("t", version)
 const {renderLogReport} = await import(utilsUrl.href)
 

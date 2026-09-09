@@ -8,6 +8,8 @@ import {ChatAdapterMessage} from "./type.js";
 import {plugin_handle_adapter_event} from "../plugin/index.js";
 import {event_emitter} from "../utils/event_emitter.js";
 import {storage_handle_adapter_event} from "../storage/index.js";
+import {filter_segments, get_chat_actor, is_sensitive_chat_message, SENSITIVE_INPUT_MESSAGE} from "../service/sensitive_filter/index.js";
+import {get_chat_adapter_prefix} from "../plugin/index.js";
 
 export const running_chat_adapters = new Map<string, any>()
 export const chat_adapter_event = new event_emitter()
@@ -18,6 +20,18 @@ export function chat_adapter_logger(plugin: string, msg: any, type: LoggerType) 
 }
 chat_adapter_event.onAny((event, data) => {
     if (event === "message") {
+        if (typeof data.raw_message === "string" && data.raw_message.startsWith(get_chat_adapter_prefix()) && is_sensitive_chat_message(data)) {
+            const target_id = data.receiver.type === "group" ? data.receiver.id : data.sender.id
+            send_message(
+                data.adapter,
+                data.instance_name,
+                data.receiver.type,
+                target_id,
+                [{type: "text", data: {text: SENSITIVE_INPUT_MESSAGE}}],
+                data.origin_object,
+            )
+            return
+        }
         const log_message = `[${data.receiver.type}][${data.receiver.channel_name.trimEnd()}][${data.sender.name}] ${data.raw_message}`
         chat_adapter_logger(data.adapter, log_message, "info")
     }
@@ -40,7 +54,7 @@ async function load_chat_adapter_from_dir(dir_path: string) {
             chat_adapter_logger("main", `chat_adapter ${config.name} 的 config.json 没有 configs 字段，跳过初始化`, "info")
             return
         }
-        const module_url = pathToFileURL(path.join(dir_path, "index.js")).href + `?t=${Date.now()}`
+        const module_url = pathToFileURL(path.join(dir_path, "index.ts")).href + `?t=${Date.now()}`
         const {init} = await import(module_url)
         if (!init) {
             chat_adapter_logger("main", `chat_adapter ${dir_path} 没有 init function`, "error")
@@ -158,11 +172,30 @@ export async function reload_chat_adapter(adapter_name?: string) {
     chat_adapter_logger("main", `chat_adapter ${adapter_name} 重载完成`, "info")
 }
 
-export function send_message(adapter: string, instance_name: string, type: "group" | "private", user_id: number, message: any, event:any) {
-    const adapter_temp = running_chat_adapters.get(adapter).get(instance_name)
+/** 停止并从运行注册表移除指定 chat_adapter。 */
+export function unload_chat_adapter(adapter_name: string): boolean {
+    const configMap = running_chat_adapters.get(adapter_name)
+    if (!configMap) return false
+    for (const instance of configMap.values()) {
+        instance.stop?.()
+    }
+    running_chat_adapters.delete(adapter_name)
+    chat_adapter_logger("main", `chat_adapter ${adapter_name} 已卸载`, "info")
+    return true
+}
+
+export function send_message(adapter: string, instance_name: string, type: "group" | "private", user_id: number | string, message: any, event:any) {
+    const adapter_temp = running_chat_adapters.get(adapter)?.get(instance_name)
     if (!adapter_temp) {
         chat_adapter_logger("main", `chat_adapter ${adapter} 实例 ${instance_name} 不存在`, "error")
         return
     }
-    adapter_temp.send(type, user_id, message, event)
+    const actor = get_chat_actor(event) || (type === "private" ? {user_id} : null)
+    adapter_temp.send(type, user_id, filter_segments(message, actor), event)
+}
+
+export async function get_chat_adapter_message(adapter: string, instance_name: string, messageId: number): Promise<any | null> {
+    const adapterInstance = running_chat_adapters.get(adapter)?.get(instance_name)
+    if (!adapterInstance || typeof adapterInstance.getMessage !== "function") return null
+    return adapterInstance.getMessage(messageId)
 }

@@ -1,0 +1,29 @@
+{
+  "name": "api_service",
+  "description": "可配置 HTTP API 服务",
+  "config_template": {
+    "description": {"name": "API说明", "type": "text", "default": ""},
+    "method": {"name": "请求方法", "type": "single_select", "options": ["GET", "POST"], "default": "GET"},
+    "url": {"name": "请求地址", "type": "string", "description": "只支持公开 HTTP(S) 地址", "default": ""},
+    "params": {"name": "GET请求参数", "type": "api_params", "default": {}},
+    "body": {"name": "POST JSON Body", "type": "api_json", "default": {}},
+    "variables": {"name": "AI可填写参数", "type": "api_variables", "default": {}},
+    "timeout_ms": {"name": "请求超时毫秒", "type": "number", "default": 10000},
+    "max_response_bytes": {"name": "响应大小上限", "type": "number", "default": 2097152},
+    "enabled": {"name": "启用", "type": "boolean", "default": true}
+  },
+  "configs": [
+    {
+      "name": "example",
+      "description": "示例 API",
+      "method": "GET",
+      "url": "https://example.com/api",
+      "params": {"id": "xxx", "key": "xxx", "keyword": "${keyword}"},
+      "body": {},
+      "variables": {"keyword": {"description": "搜索关键词", "type": "string", "required": true}},
+      "timeout_ms": 10000,
+      "max_response_bytes": 2097152,
+      "enabled": false
+    }
+  ]
+}

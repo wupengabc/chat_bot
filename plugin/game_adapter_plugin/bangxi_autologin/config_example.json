@@ -7,10 +7,17 @@
       "type": "string",
       "description": "登录密码",
       "default": ""
+    },
+    "login_delay_ms": {
+      "name": "login_delay_ms",
+      "type": "number",
+      "description": "收到登录提示后等待的时间（毫秒）",
+      "default": 5000
     }
   },
   "configs": [{
     "name": "bangxi",
-    "password": "your_password_here"
+    "password": "your_password_here",
+    "login_delay_ms": 5000
   }]
 }

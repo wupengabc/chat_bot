@@ -1,0 +1,19 @@
+{
+  "name": "统一敏感词过滤",
+  "description": "统一处理聊天、网页 API、Agent 和 AI 内容。输入或输出命中时均拒绝处理。敏感词原文仅所有者可查看和修改。",
+  "config_template": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用敏感词过滤"
+    },
+    "sensitive_words": {
+      "type": "string_list",
+      "default": [],
+      "sensitive": true,
+      "description": "敏感词名单；支持大小写、全角半角、空格和常见标点归一化"
+    }
+  },
+  "enabled": true,
+  "sensitive_words": []
+}

@@ -104,6 +104,9 @@ export interface LogFilter {
   platform?: string
   plugin?: string
   type?: LoggerType
+  keyword?: string
+  time_from?: string
+  time_to?: string
 }
 
 type LogOrm = ReturnType<typeof drizzle>
@@ -113,6 +116,9 @@ function runLogQuery(orm: LogOrm, filter: LogFilter, page: number, pageSize: num
   if (filter.platform) conditions.push(sql`lower(${log_table.platform}) = lower(${filter.platform})`)
   if (filter.plugin) conditions.push(sql`lower(${log_table.plugin}) = lower(${filter.plugin})`)
   if (filter.type) conditions.push(sql`lower(${log_table.type}) = lower(${filter.type})`)
+  if (filter.keyword) conditions.push(sql`lower(${log_table.msg}) LIKE lower(${`%${filter.keyword}%`})`)
+  if (filter.time_from) conditions.push(sql`${log_table.time} >= ${filter.time_from}`)
+  if (filter.time_to) conditions.push(sql`${log_table.time} < ${filter.time_to}`)
   const whereCondition = conditions.length ? and(...conditions) : undefined
   const rows = orm.select().from(log_table).where(whereCondition)
     .orderBy(desc(log_table.id)).limit(pageSize).offset((page - 1) * pageSize).all() as LogEntry[]
@@ -182,10 +188,13 @@ function get_logger_by_platform_plugin_type(platform: string, plugin: string, ty
 }
 
 
-function get_platforms_plugins_types() {
+function get_platforms_plugins_types(platform?: string) {
   ensureDb()
   const platforms = _orm!.select({value: log_meta_table.platform}).from(log_meta_table).groupBy(log_meta_table.platform).all().map(r => r.value)
-  const plugins = _orm!.select({value: log_meta_table.plugin}).from(log_meta_table).groupBy(log_meta_table.plugin).all().map(r => r.value)
+  const normalizedPlatform = platform?.trim()
+  const plugins = _orm!.select({value: log_meta_table.plugin}).from(log_meta_table)
+    .where(normalizedPlatform ? sql`lower(${log_meta_table.platform}) = lower(${normalizedPlatform})` : undefined)
+    .groupBy(log_meta_table.plugin).all().map(r => r.value)
   const types = _orm!.select({value: log_meta_table.type}).from(log_meta_table).groupBy(log_meta_table.type).all().map(r => r.value)
   return { platforms, plugins, types }
 }

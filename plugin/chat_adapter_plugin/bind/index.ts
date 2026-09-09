@@ -1,7 +1,7 @@
 import { help } from "../../type.js";
 import {get_chat_adapter_prefix, acquire_plugin_lock, release_plugin_lock, acquire_named_lock, release_named_lock} from "../../index.js";
 import {send_message} from "../../../chat_adapter/index.js";
-import {Structs} from "node-napcat-ts";
+import {message as Structs} from "@snowluma/sdk";
 import {get_game_adapter} from "../../../game_adapter/index.js";
 import {get_storage} from "../../../storage/index.js";
 

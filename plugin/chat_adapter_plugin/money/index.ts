@@ -1,13 +1,13 @@
 import {get_chat_adapter_prefix, acquire_plugin_lock, release_plugin_lock} from "../../index.js";
 import { help } from "../../type.js";
 import {send_message} from "../../../chat_adapter/index.js";
-import {Structs} from "node-napcat-ts";
+import {message as Structs} from "@snowluma/sdk";
 import {get_game_adapter} from "../../../game_adapter/index.js";
 import {get_storage} from "../../../storage/index.js";
 import {loadAvatarImage} from "../../../service/minecraft_service/index.js";
 const currentUrl = new URL(import.meta.url)
 const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
-const utilsUrl = new URL("./utils/index.js", import.meta.url)
+const utilsUrl = new URL("./utils/index.ts", import.meta.url)
 utilsUrl.searchParams.set("t", version)
 const { renderPlayerMoney } = await import(utilsUrl.href)
 
@@ -135,7 +135,14 @@ export class init {
                 }
 
                 game_instance_temp.event.on("message", on_message)
-                game_instance_temp.send_message(`/money ${player_name}`)
+                if (!game_instance_temp.send_message(`/money ${player_name}`)) {
+                    settled = true
+                    clearTimeout(timer)
+                    game_instance_temp.event.off("message", on_message)
+                    remove_pending()
+                    send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
+                        [Structs.at(data.sender.user_id), Structs.text("Bot 未连接，无法执行查询")], data.origin_object)
+                }
             }
         }
     }

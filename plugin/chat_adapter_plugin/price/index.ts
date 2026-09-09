@@ -1,16 +1,11 @@
-import {Structs} from "node-napcat-ts"
+import {message as Structs} from "@snowluma/sdk"
 import ExcelJS from "exceljs"
 import {send_message} from "../../../chat_adapter/index.js"
 import {get_game_adapter} from "../../../game_adapter/index.js"
 import {get_storage} from "../../../storage/index.js"
 import {acquire_plugin_lock, get_chat_adapter_prefix, plugin_logger, release_plugin_lock} from "../../index.js"
 import {help} from "../../type.js"
-const currentUrl = new URL(import.meta.url)
-const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
-const utilsUrl = new URL("./utils/index.js", import.meta.url)
-utilsUrl.searchParams.set("t", version)
-const {renderPriceAverage} = await import(utilsUrl.href)
-
+import {split_price_outliers} from "../../../utils/price_utils.js"
 type SellType = "sell" | "buy"
 type ParsedPrice = {player: string, item_id: string, sell_type: SellType, price: number, count: string, position: string}
 type PriceRow = {shop: string, player: string | null, price: number, count: string | null, position: string | null, create_at: string}
@@ -49,6 +44,12 @@ export class init {
                 permission: 2,
                 args: [{ key: "商店名", description: "要删除的商店", permission: 2, args: [] }],
             },
+            {
+                key: "migrate",
+                description: "同步price表数据到shop_list表",
+                permission: 2,
+                args: [],
+            },
         ],
         platform: "chat_adapter"
     }
@@ -80,11 +81,19 @@ export class init {
         const game_id = permission_storage.get_user_info(user_id)?.game_id || ""
         if (action === "update") return this.update_shop(data, args, game_id, storage)
         if (action === "avg") return this.show_average(data, args, storage)
-        if (action !== "get" && action !== "delete") return this.reply(data, "操作无效，可用操作：update / avg / get / delete")
+        if (action === "migrate") return this.migrate_shop_list(data, game_id, storage)
+        if (action !== "get" && action !== "delete") return this.reply(data, "操作无效，可用操作：update / avg / get / delete / migrate")
         if (!game_id) return this.reply(data, "你暂未绑定游戏账号")
         if (this.get_permission(storage, game_id) < 2) return this.reply(data, "权限不足，只有权限等级2的用户可以执行该操作")
         if (action === "get") return this.show_prices(data, args, storage)
         return this.delete_shop(data, args, storage)
+    }
+
+    private async migrate_shop_list(data: any, game_id: string, storage: any) {
+        if (!game_id) return this.reply(data, "你暂未绑定游戏账号")
+        if (this.get_permission(storage, game_id) < 2) return this.reply(data, "权限不足，只有权限等级2的用户可以执行该操作")
+        const result = storage.sync_shop_list_from_price()
+        this.reply(data, result.success ? `shop_list 同步完成，共同步 ${result.count} 个商店` : result.message)
     }
 
     private async update_shop(data: any, args: string[], game_id: string, storage: any) {
@@ -119,7 +128,7 @@ export class init {
                 plugin_logger("price", `商店 ${shop_name} 更新完成，出售 ${sell_count} 条，收购 ${buy_count} 条，共写入 ${prices.length} 条；已扣除100积分`, "info")
             } finally {
                 clearTimeout(task_timeout)
-                await this.return_home(instance.bot)
+                await this.return_home(instance)
             }
         }, false)
         if (!accepted && !task_started) this.reply(data, "已有商店价格更新任务正在运行，请稍后再试")
@@ -128,18 +137,29 @@ export class init {
     private show_average(data: any, args: string[], storage: any) {
         const parsed = this.parse_item_command(args)
         if (!parsed) return this.reply(data, "用法：price avg <物品名> <出售|收购>")
-        const prices = storage.get_current_shop_prices(parsed.item_name, parsed.sell_type) as PriceRow[]
-        if (!prices.length) return this.reply(data, `没有找到 ${parsed.item_name} 的${parsed.label}价格`)
-        const {valid, outliers} = this.remove_outliers(prices)
-        const average = valid.reduce((sum, item) => sum + Number(item.price), 0) / valid.length
-        const image = renderPriceAverage({
-            itemName: parsed.item_name,
-            label: parsed.label as "出售" | "收购",
-            average,
-            validShops: valid.map(item => item.shop),
-            outliers: outliers.map(item => ({shop: item.shop, price: Number(item.price)})),
-        })
-        this.reply_image(data, image)
+        const result = storage.get_current_item_average(parsed.item_name, parsed.sell_type)
+        if (!result) return this.reply(data, `没有找到 ${parsed.item_name} 的${parsed.label}价格`)
+        const adjusted = result.adjusted || []
+        const outliers = result.outliers || []
+        const format_shops = (items: any[]): string => {
+            const shops = items.map(item => String(item.shop || "").trim()).filter(Boolean)
+            const limit = 50
+            const visible = shops.slice(0, limit).join("、") || "无"
+            return shops.length > limit ? `${visible}（仅显示前${limit}家）` : visible
+        }
+        let message = `${parsed.item_name} 的${parsed.label}平均价格：${Number(result.average).toFixed(2)} 金币`
+        message += `\n有效商店（${result.prices.length} 家）：${format_shops(result.prices)}`
+        if (adjusted.length) {
+            message += `\n修正后纳入均值商店（${adjusted.length} 家）：${format_shops(adjusted)}`
+        }
+        if (outliers.length) {
+            const formatted_outliers = outliers.slice(0, 50).map((item: any) =>
+                `${String(item.shop || "").trim()}: ${Number(item.price).toFixed(2)} 金币`
+            ).join("、") || "无"
+            message += `\n异常商店（${outliers.length} 家）：${formatted_outliers}`
+            if (outliers.length > 50) message += "（仅显示前50家）"
+        }
+        this.reply(data, message)
     }
 
     private show_prices(data: any, args: string[], storage: any) {
@@ -192,7 +212,7 @@ export class init {
                 signal.addEventListener("abort", abort_listener, {once: true})
                 bot.on("messagestr", message_listener)
                 bot.once("end", end_listener)
-                bot.chat(`/pw ${shop_name}`)
+                if (!instance.send_message(`/pw ${shop_name}`)) finish(new Error("Bot 未连接"))
             })
             await this.wait_for_position_change(bot, before_teleport, signal)
             await this.wait_for_chunks(bot, signal)
@@ -268,7 +288,8 @@ export class init {
         }
     }
 
-    private async return_home(bot: any) {
+    private async return_home(instance: any) {
+        const bot = instance?.bot
         if (!bot) return
         await new Promise<void>((resolve) => {
             let settled = false
@@ -290,7 +311,7 @@ export class init {
             home_end_listener = () => finish()
             bot.on("messagestr", home_message_listener)
             bot.once("end", home_end_listener)
-            try { bot.chat("/home home") } catch { finish() }
+            try { if (!instance.send_message("/home home")) finish() } catch { finish() }
         })
     }
 
@@ -433,7 +454,7 @@ export class init {
 
     private send_file(data: any, file: Buffer, name: string) {
         send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
-            [Structs.file(file, name)], data.origin_object)
+            [Structs.raw("file", {file, name})], data.origin_object)
     }
 
     private get_sign_sides(block: any): string[] {
@@ -523,26 +544,9 @@ export class init {
         return item_name ? {item_name, sell_type: label === "出售" ? "sell" : "buy", label} : null
     }
 
-    private remove_outliers(prices: PriceRow[]): {valid: PriceRow[], outliers: PriceRow[]} {
-        if (prices.length <= 5) return {valid: prices, outliers: []}
-        const sorted = prices.map(item => Number(item.price)).sort((a, b) => a - b)
-        const q1 = sorted[Math.floor(sorted.length * 0.25)]
-        const q3 = sorted[Math.floor(sorted.length * 0.75)]
-        const iqr = q3 - q1
-        const lower = q1 - 1.5 * iqr, upper = q3 + 1.5 * iqr
-        const valid = prices.filter(item => Number(item.price) >= lower && Number(item.price) <= upper)
-        const outliers = prices.filter(item => Number(item.price) < lower || Number(item.price) > upper)
-        return valid.length ? {valid, outliers} : {valid: prices, outliers: []}
-    }
-
     private get_permission(storage: any, game_id: string): number {
         const user = storage.get_user_info(game_id)
         return user ? storage.user_permission_map[user.role] ?? 0 : 0
-    }
-
-    private reply_image(data: any, image: Buffer) {
-        send_message(data.adapter, data.instance_name, data.receiver.type, data.sender.id,
-            [Structs.at(data.sender.user_id), Structs.image(image)], data.origin_object)
     }
 
     private reply(data: any, message: string) {

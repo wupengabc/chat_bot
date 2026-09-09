@@ -1,0 +1,61 @@
+{
+  "name": "kugou_service",
+  "description": "酷狗音乐本地网关服务",
+  "config_template": {
+    "kugouApi": {
+      "name": "本地网关地址",
+      "type": "text",
+      "description": "所有酷狗请求都会发送到此本地网关。",
+      "default": "http://127.0.0.1:3000"
+    },
+    "account": {
+      "name": "酷狗账号",
+      "type": "qrcode_auth",
+      "provider": "kugou",
+      "description": "扫描二维码后自动保存登录凭据。",
+      "default": {}
+    },
+    "tokenRefreshHours": {
+      "name": "Token 刷新间隔（小时）",
+      "type": "number",
+      "description": "登录后按此间隔刷新 Token。",
+      "default": 12
+    },
+    "playlistPageSize": {
+      "name": "歌单分页大小",
+      "type": "number",
+      "description": "同步歌单和歌曲时每次请求的数量，默认 30。",
+      "default": 30
+    },
+    "navbarPlaylistId": {
+      "name": "导航播放器默认歌单",
+      "type": "text",
+      "description": "在已同步歌单中选择，导航播放器只会读取该歌单。",
+      "default": ""
+    },
+    "autoPlay": {
+      "name": "自动播放",
+      "type": "boolean",
+      "description": "前端读取导航歌单后自动尝试播放首首歌曲。浏览器拦截时会要求用户确认。",
+      "default": false
+    },
+    "autoPictureInPicture": {
+      "name": "离开页面自动画中画",
+      "type": "boolean",
+      "description": "桌面端离开当前页面时，自动将正在播放的导航音乐显示为画中画。仅在支持 Auto PiP 的浏览器中生效。",
+      "default": false
+    }
+  },
+  "configs": [
+    {
+      "name": "default",
+      "kugouApi": "http://127.0.0.1:3000",
+      "account": {},
+      "tokenRefreshHours": 12,
+      "playlistPageSize": 30,
+      "navbarPlaylistId": "",
+      "autoPlay": false,
+      "autoPictureInPicture": false
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "name": "event_submit",
+  "description": "订阅服务器事件并推送到群聊",
+  "config_template": {
+    "allowed_group_ids": {
+      "name": "allowed_group_ids",
+      "type": "string_list",
+      "description": "允许订阅事件的群 ID；未列出的群不能使用 event_submit，也不会在 /help 中看到该命令",
+      "default": []
+    },
+    "server_owner_list": {
+      "name": "server_owner_list",
+      "type": "string_list",
+      "description": "服主 Minecraft 用户名名单",
+      "default": []
+    },
+    "subscribers": {
+      "name": "subscribers",
+      "type": "array",
+      "description": "事件订阅用户；可在网页配置中删除单个订阅",
+      "default": [],
+      "item_template": {
+        "event": {
+          "name": "事件",
+          "type": "single_select",
+          "options": ["owner_online", "player_trade_intent"],
+          "default": "owner_online"
+        },
+        "group_id": {
+          "name": "群 ID",
+          "type": "text",
+          "default": ""
+        },
+        "user_id": {
+          "name": "用户 ID",
+          "type": "text",
+          "default": ""
+        },
+        "adapter": {
+          "name": "聊天适配器",
+          "type": "text",
+          "description": "由命令自动写入；手动新增时可留空（留空会尝试所有聊天适配器）",
+          "default": ""
+        },
+        "instance_name": {
+          "name": "适配器实例",
+          "type": "text",
+          "description": "由命令自动写入；手动新增时可留空",
+          "default": ""
+        }
+      }
+    }
+  },
+  "configs": [
+    {
+      "name": "default",
+      "allowed_group_ids": [],
+      "server_owner_list": ["admin1", "admin2"],
+      "subscribers": []
+    }
+  ]
+}

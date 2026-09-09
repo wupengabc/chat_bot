@@ -2,12 +2,17 @@
   "name": "bangxi_autohome",
   "description": "自动home插件",
   "config_template": {
-    "password": "your_password_here"
+    "home": {
+      "name": "home",
+      "type": "string",
+      "description": "home地址",
+      "default": ""
+    }
   },
   "configs": [
     {
       "name": "example",
-      "password": "your_password_here"
+      "home": "your_home_address"
     }
   ]
 }

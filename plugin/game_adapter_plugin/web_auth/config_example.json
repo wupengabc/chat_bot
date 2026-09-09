@@ -1,0 +1,6 @@
+{
+  "name": "web_auth",
+  "description": "网页通行证注册与密码修改",
+  "config_template": {},
+  "configs": [{"name": "default"}]
+}

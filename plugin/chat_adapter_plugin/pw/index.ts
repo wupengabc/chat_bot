@@ -1,4 +1,4 @@
-import {Structs} from "node-napcat-ts"
+import {message as Structs} from "@snowluma/sdk"
 import {send_message} from "../../../chat_adapter/index.js"
 import {get_game_adapter} from "../../../game_adapter/index.js"
 import {get_storage} from "../../../storage/index.js"
@@ -70,27 +70,40 @@ export class init {
         const user = storage.get_user_info(game_id)
         const permission = user ? storage.user_permission_map[user.role as keyof typeof storage.user_permission_map] ?? 0 : 0
         if (permission < 2) return this.reply(data, "权限不足，只有权限等级 2 的用户可以执行地标更新")
-        const instance = get_game_adapter("mineflayer", "bangxi")
-        if (!instance || instance.status !== "running") return this.reply(data, "Bot暂未连接至服务器")
+        try {
+            const result = await this.update_global(flags.includes("--dry-run"))
+            this.reply(data, result.dry_run
+                ? `地标预览完成：共读取 ${result.total} 条有效地标，未写入数据表`
+                : `地标更新完成\n共写入 ${result.pages} 页，当前 ${result.total} 条地标`)
+        } catch (error: any) {
+            this.reply(data, error?.message || "地标更新失败")
+        }
+    }
+
+    public async update_global(dry_run = false): Promise<{dry_run: boolean, pages: number, total: number}> {
+        const storage = get_storage("bangxi_server_storage") as any
+        const instance = get_game_adapter("mineflayer", "bangxi") as any
+        if (!storage?.clear_landmarks || !storage?.insert_landmark_page) throw new Error("地标存储不可用")
+        if (!instance || instance.status !== "running") throw new Error("Bot暂未连接至服务器")
         let started = false
+        let result: {dry_run: boolean, pages: number, total: number} | undefined
         const accepted = await instance.execute_single_task(async () => {
             started = true
-            const dry_run = flags.includes("--dry-run")
-            this.reply(data, `正在${dry_run ? "预览" : "更新"}全部地标，最多等待 10 分钟……`)
-            let inserted_pages = 0
-            let database_total = 0
+            let pages = 0
+            let total = 0
             if (!dry_run) storage.clear_landmarks()
-            const landmarks = await this.get_all_landmarks(instance, dry_run ? undefined : page_landmarks => {
-                const result = storage.insert_landmark_page(page_landmarks)
-                if (!result.success) throw new Error(result.message)
-                inserted_pages++
-                database_total = result.total
-                return database_total
+            const landmarks = await this.get_all_landmarks(instance, dry_run ? undefined : pageLandmarks => {
+                const written = storage.insert_landmark_page(pageLandmarks)
+                if (!written.success) throw new Error(written.message)
+                pages++
+                total = written.total
+                return total
             })
-            if (dry_run) return this.reply(data, `地标预览完成：共读取 ${landmarks.length} 条有效地标，未写入数据表`)
-            this.reply(data, `地标更新完成\n共写入 ${inserted_pages} 页，当前 ${database_total} 条地标`)
+            result = {dry_run, pages, total: dry_run ? landmarks.length : total}
         }, false)
-        if (!accepted && !started) this.reply(data, "已有游戏任务正在运行，请稍后再试")
+        if (!accepted && !started) throw new Error("已有游戏任务正在运行，请稍后再试")
+        if (!result) throw new Error("地标更新未完成")
+        return result
     }
 
     private list(data: any, args: string[], storage: any) {

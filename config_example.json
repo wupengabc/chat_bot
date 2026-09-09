@@ -5,5 +5,9 @@
   "webhook_host": "0.0.0.0",
   "webhook_port": 8787,
   "webhook_path": "/webhook",
-  "webhook_key": "请替换为随机密钥"
+  "webhook_key": "请替换为随机密钥",
+  "web_host": "127.0.0.1",
+  "web_port": 8788,
+  "web_jwt_resource_secret": "请填写至少32个字符的资源Token密钥",
+  "web_jwt_refresh_secret": "请填写至少32个字符的刷新Token密钥"
 }

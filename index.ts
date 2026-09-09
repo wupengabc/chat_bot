@@ -1,14 +1,29 @@
 import express from 'express'
+import http from 'node:http'
 import * as readline from 'node:readline'
+import fs from 'node:fs'
+import path from 'node:path'
 import {log_utils} from "./utils/log_utils.js";
+import {path_utils} from "./utils/path_utils.js";
 import {init_chat_adapter, reload_chat_adapter, list_chat_adapter, running_chat_adapters} from "./chat_adapter/index.js";
 import {init_game_adapter, reload_game_adapter, list_game_adapter, exec_game_adapter_command, list_game_adapter_commands, running_game_adapters} from "./game_adapter/index.js";
 import {init_storage, reload_storage, list_storage, exec_storage_command, list_storage_commands, get_storage_names, get_storage_command_names} from "./storage/index.js";
 import {init_plugin, reload_plugin, list_plugin, get_plugin_names} from "./plugin/index.js";
+import {startKugouService} from "./service/kugou/kugou.js";
 export const app = express()
+let dispose_web_api: (() => void) | undefined
+let dispose_world_map_socket: (() => void) | undefined
+app.set('trust proxy', 'loopback')
+// Map artwork submissions include Base64-encoded 128x128 map pixels.
+app.use(express.json({limit: "32mb"}))
+
+app.get("/api/health", (_request, response) => {
+    response.json({success: true, service: "chat_bot"})
+})
 
 async function main(){
     await init_storage()
+    startKugouService()
     await init_plugin()
     await init_chat_adapter()
     await init_game_adapter()
@@ -27,13 +42,15 @@ function consoleCompleter(line: string): [string[], string] {
     let candidates: string[] = []
 
     if (position === 0) {
-        candidates = ["/plugin", "/chat", "/game", "/storage"]
+        candidates = ["/plugin", "/chat", "/game", "/storage", "/service"]
     } else if (position === 1) {
         candidates = module === "/plugin" || module === "/chat"
             ? ["reload", "list"]
             : module === "/game" || module === "/storage"
                 ? ["reload", "list", "select"]
-                : []
+                : module === "/service"
+                    ? ["reload"]
+                    : []
     } else if (module === "/plugin" && action === "reload" && position === 2) {
         candidates = get_plugin_names()
     } else if (module === "/chat" && action === "reload" && position === 2) {
@@ -58,6 +75,8 @@ function consoleCompleter(line: string): [string[], string] {
         } else if (action === "select" && parts[3] === "change_permission" && position === 5) {
             candidates = ["member", "admin", "owner"]
         }
+    } else if (module === "/service" && action === "reload" && position === 2) {
+        candidates = ["web"]
     }
 
     const hits = candidates.filter(candidate => candidate.startsWith(fragment)).sort()
@@ -181,6 +200,28 @@ function init_console() {
                     log_utils.logger("console", "main", `未知操作: ${action || "(空)"}，可用: reload, list, select`, "warn")
                 }
                 return
+            case '/service':
+                if (action === 'reload' && arg === 'web') {
+                    log_utils.logger("console", "main", "正在重新加载 Web API...", "info")
+                    try {
+                        dispose_web_api?.()
+                        dispose_web_api = undefined
+                        const router = (app as any).router ?? (app as any)._router
+                        if (router?.stack) {
+                            router.stack = router.stack.filter((layer: any) => {
+                                return !layer.route?.path?.startsWith('/api/')
+                            })
+                        }
+                        const {init} = await import(`./service/web_service/api/index.ts?t=${Date.now()}`)
+                        dispose_web_api = await init(app)
+                        log_utils.logger("console", "main", "Web API 重载完成", "info")
+                    } catch (error: any) {
+                        log_utils.logger("console", "main", `Web API 重载失败: ${error.message}`, "error")
+                    }
+                } else {
+                    log_utils.logger("console", "main", `未知操作: ${action || "(空)"}，可用: reload web`, "warn")
+                }
+                return
         }
 
         log_utils.logger("console", "main", `未知命令: ${line}`, "warn")
@@ -188,7 +229,28 @@ function init_console() {
     })
 }
 
-(() => main().then(() => {
+async function init_web_service() {
+    const config = JSON.parse(fs.readFileSync(path.join(path_utils.get_project_root_path(), "config.json"), "utf-8")) as {
+        web_host?: string
+        web_port?: number
+    }
+    const host = config.web_host || "127.0.0.1"
+    const port = config.web_port || 8788
+
+    const {init} = await import("./service/web_service/api/index.js")
+    dispose_web_api = await init(app)
+
+    const server = http.createServer(app)
+    const {getWorldMapConfig} = await import("./service/web_service/api/worlds/index.js")
+    const {initWorldMapSocket} = await import("./service/web_service/api/worlds/socket.js")
+    dispose_world_map_socket = initWorldMapSocket(server, getWorldMapConfig)
+    server.listen(port, host, () => {
+        log_utils.logger("main", "web_service", `Express API 已启动: http://${host}:${port}`, "info")
+    })
+}
+
+(() => main().then(async () => {
+    await init_web_service()
     log_utils.logger("main", "main", "ChatBot 成功启动")
 }))()
 

@@ -35,7 +35,7 @@ async function load_game_adapter_from_dir(dir_path: string) {
             game_adapter_logger("main", `game_adapter ${config.name} 的 config.json 没有 configs 字段，跳过初始化`, "info")
             return
         }
-        const module_url = pathToFileURL(path.join(dir_path, "index.js")).href + `?t=${Date.now()}`
+        const module_url = pathToFileURL(path.join(dir_path, "index.ts")).href + `?t=${Date.now()}`
         const {init} = await import(module_url)
         if (!init) {
             game_adapter_logger("main", `game_adapter ${dir_path} 没有 init function`, "error")
@@ -151,6 +151,18 @@ export async function reload_game_adapter(adapter_name?: string) {
     game_adapter_logger("main", `正在重新加载 game_adapter ${adapter_name}...`, "info")
     await load_game_adapter_from_dir(dir_path)
     game_adapter_logger("main", `game_adapter ${adapter_name} 重载完成`, "info")
+}
+
+/** 停止并从运行注册表移除指定 game_adapter。 */
+export function unload_game_adapter(adapter_name: string): boolean {
+    const configMap = running_game_adapters.get(adapter_name)
+    if (!configMap) return false
+    for (const instance of configMap.values()) {
+        instance.stop?.()
+    }
+    running_game_adapters.delete(adapter_name)
+    game_adapter_logger("main", `game_adapter ${adapter_name} 已卸载`, "info")
+    return true
 }
 
 export function get_game_adapter(adapter_name: string, config_name: string) {

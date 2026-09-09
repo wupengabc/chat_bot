@@ -36,6 +36,50 @@ export function extractCqImageUrls(content: string, limit: number = MAX_IMAGES):
     return urls
 }
 
+export function extractReplyMessageId(content: string, message?: unknown): number | null {
+    const rawMatch = content.match(/\[CQ:reply,([^\]]*)]/)?.[1]?.match(/(?:^|,)id=(-?\d+)(?:,|$)/)
+    if (rawMatch) {
+        const value = Number(rawMatch[1])
+        if (Number.isSafeInteger(value)) return value
+    }
+    const segments = Array.isArray(message) ? message : []
+    for (const item of segments) {
+        if (!item || typeof item !== "object" || (item as any).type !== "reply") continue
+        const value = Number((item as any).data?.id)
+        if (Number.isSafeInteger(value)) return value
+    }
+    return null
+}
+
+export function stripLeadingReply(content: string): string {
+    return content.replace(/^\s*\[CQ:reply,[^\]]*]\s*/, "")
+}
+
+function isSupportedImageUrl(value: unknown): value is string {
+    if (typeof value !== "string" || !value.trim()) return false
+    try {
+        return new URL(value).protocol === "https:"
+    } catch {
+        return false
+    }
+}
+
+/** NapCat supplies images as message segments, while raw_message often only contains a display placeholder. */
+export function extractMessageImageUrls(message: unknown, limit: number = MAX_IMAGES): string[] {
+    const urls = new Set<string>()
+    const collect = (value: unknown): void => {
+        if (urls.size >= limit || !value || typeof value !== "object") return
+        if (Array.isArray(value)) {
+            for (const item of value) collect(item)
+            return
+        }
+        const segment = value as {type?: unknown, data?: {url?: unknown}}
+        if (segment.type === "image" && isSupportedImageUrl(segment.data?.url)) urls.add(segment.data.url)
+    }
+    collect(message)
+    return [...urls]
+}
+
 export async function fetchImageDataUrl(url: string, fetcher: typeof fetch = fetch): Promise<string> {
     const parsedUrl = new URL(url)
     if (parsedUrl.protocol !== "https:") throw new Error("仅支持 HTTPS 图片")
@@ -75,8 +119,9 @@ export async function loadCqImages(
     content: string,
     onWarning: (index: number, error: unknown) => void,
     fetcher: typeof fetch = fetch,
+    message?: unknown,
 ): Promise<string[]> {
-    const urls = extractCqImageUrls(content)
+    const urls = [...new Set([...extractCqImageUrls(content), ...extractMessageImageUrls(message)])].slice(0, MAX_IMAGES)
     const results = await Promise.all(urls.map(async (url, index) => {
         try {
             return await fetchImageDataUrl(url, fetcher)
