@@ -1,0 +1,32 @@
+{
+  "name": "kugou_music",
+  "description": "搜索并发送酷狗音乐卡片",
+  "config_template": {
+    "serviceConfig": {
+      "name": "酷狗服务配置实例",
+      "type": "text",
+      "description": "使用 service/kugou 中对应的配置实例。",
+      "default": "default"
+    },
+    "signatureApi": {
+      "name": "音乐卡片签名接口",
+      "type": "text",
+      "description": "返回 QQ 音乐 Ark 卡片 JSON 的签名服务地址。",
+      "default": "https://apii.xianyuw.cn/api/v1/qq-musicArk"
+    },
+    "signatureApiKey": {
+      "name": "音乐卡片签名令牌",
+      "type": "text",
+      "description": "Ark 音乐卡片签名服务的用户令牌。",
+      "default": ""
+    }
+  },
+  "configs": [
+    {
+      "name": "default",
+      "serviceConfig": "default",
+      "signatureApi": "https://apii.xianyuw.cn/api/v1/qq-musicArk",
+      "signatureApiKey": ""
+    }
+  ]
+}

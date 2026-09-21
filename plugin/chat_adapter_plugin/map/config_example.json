@@ -1,0 +1,10 @@
+{
+  "name": "map_chat",
+  "description": "查询公开地图画",
+  "config_template": {},
+  "configs": [
+    {
+      "name": "map"
+    }
+  ]
+}

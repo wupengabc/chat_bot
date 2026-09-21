@@ -1,9 +1,55 @@
-import {Bot, ReceiverMode, SessionEvents} from "qq-official-bot";
+import {Bot, ReceiverMode, segment, SessionEvents} from "qq-official-bot";
 import {running_status} from "../../type/index.js";
 import {chat_adapter_logger} from "../index.js";
 import {ChatAdapterMessage} from "../type.js";
 import {time_utils} from "../../utils/time_utils.js";
 import {event_emitter} from "../../utils/event_emitter.js";
+import {filter_segments, get_chat_actor, is_sensitive_chat_message, SENSITIVE_INPUT_MESSAGE} from "../../service/sensitive_filter/index.js";
+import {get_chat_adapter_prefix} from "../../plugin/index.js";
+
+function convertSnowLumaStruct(message: any, event: any, type?: "group" | "private"): any {
+    if (Array.isArray(message)) {
+        return message.map(item => convertSnowLumaStruct(item, event, type)).filter(item => item !== null)
+    }
+    if (!message || typeof message !== "object" || !message.data) {
+        return message
+    }
+
+    const data = message.data
+    switch (message.type) {
+        case "text":
+            return typeof data.text === "string" ? segment.text(data.text) : message
+        case "at":
+            if (data.qq === undefined) return message
+            // 私聊不支持 @，直接去掉
+            if (type === "private") return null
+            return event?.message_type === "guild" || event?.message_type === "group"
+                ? segment.at(String(data.qq))
+                : null
+        case "reply":
+            return data.id !== undefined ? segment.reply(String(data.id)) : message
+        case "face": {
+            const id = Number(data.id)
+            return Number.isInteger(id) ? segment.face(id, data.text) : message
+        }
+        case "image":
+            return data.file !== undefined
+                ? segment.image(data.file, {url: data.url, name: data.name})
+                : message
+        case "video":
+            return typeof data.file === "string"
+                ? segment.video(data.file, {url: data.url, name: data.name})
+                : message
+        case "record":
+            return typeof data.file === "string"
+                ? segment.audio(data.file, {url: data.url, name: data.name})
+                : message
+        case "markdown":
+            return typeof data.content === "string" ? segment.markdown(data.content) : message
+        default:
+            return message
+    }
+}
 
 export class init {
     private qq_official: Bot;
@@ -78,6 +124,20 @@ export class init {
 
         this.qq_official.on("message", (message:any) => {
             try {
+                if (typeof message.raw_message === "string" && message.raw_message.startsWith(get_chat_adapter_prefix()) && is_sensitive_chat_message({
+                    raw_message: message.raw_message,
+                    message: message.message,
+                    sender: {user_id: message.sender?.user_id},
+                })) {
+                    const type = message.message_type === "private" ? "private" : "group"
+                    const target = type === "private"
+                        ? message.sender?.user_id
+                        : message.group_id || message.group_openid || message.channel_id || message.guild_id
+                    if (target !== undefined && target !== null) {
+                        this.send(type, target, [{type: "text", data: {text: SENSITIVE_INPUT_MESSAGE}}], message)
+                    }
+                    return
+                }
                 const emit_message:ChatAdapterMessage = {
                     adapter: "qq_official",
                     instance_name: officialBotConfig.name,
@@ -136,6 +196,14 @@ export class init {
             clearTimeout(this.reconnectTimer)
             this.reconnectTimer = null
         }
+        // 通知 Bot 库内部连接管理器停止自动重连
+        const sessionManager = (this.qq_official as any).sessionManager
+        if (sessionManager?.connectionManager) {
+            sessionManager.connectionManager.state.userClose = true
+            sessionManager.connectionManager.state.alive = false
+            sessionManager.connectionManager.stopHeartbeat()
+            sessionManager.connectionManager.removeAllListeners()
+        }
         try {
             this.qq_official.stop().then(() => {
                 chat_adapter_logger("qq_official", `qq_official 已断开连接`, "info")
@@ -149,7 +217,17 @@ export class init {
         }
     }
 
-    send(type: "group" | "private", user_id: number, message: any, event: any) {
-        event.reply(message)
+    send(type: "group" | "private", user_id: number | string, message: any, event: any) {
+        const actor = get_chat_actor(event) || (type === "private" ? {user_id} : null)
+        const converted = convertSnowLumaStruct(filter_segments(message, actor), event, type)
+        if (type === "group" && typeof event?.reply !== "function") {
+            this.qq_official.sendGroupMessage(String(user_id), converted)
+            return
+        }
+        if (type === "private" && typeof event?.reply !== "function") {
+            this.qq_official.sendPrivateMessage(String(user_id), converted)
+            return
+        }
+        event.reply(converted)
     }
 }

@@ -179,6 +179,15 @@ export function get_plugin_names(): string[] {
     return Array.from(running_plugins.keys())
 }
 
+/** 获取插件及其已启动实例，供受控管理界面展示。 */
+export function get_plugin_statuses(): Array<{name: string; instances: string[]; adapters: string[]}> {
+    return Array.from(running_plugins.entries()).map(([name, configMap]) => ({
+        name,
+        instances: Array.from(configMap.keys()),
+        adapters: Array.from(new Set(Array.from(configMap.values()).flatMap(value => value.adapters))),
+    }))
+}
+
 /** 获取已注册的插件实例 */
 export function get_plugin(plugin_name: string, config_name: string): any {
     return running_plugins.get(plugin_name)?.get(config_name)?.instance
@@ -212,7 +221,7 @@ async function load_plugin_from_dir(sub_dir: string, default_adapters: string[])
             plugin_logger(plugin_name, "config.json 没有 configs 字段，跳过初始化", "info")
             return
         }
-        const module_url = pathToFileURL(path.join(sub_dir, "index.js")).href + `?t=${Date.now()}`
+        const module_url = pathToFileURL(path.join(sub_dir, "index.ts")).href + `?t=${Date.now()}`
         const { init } = await import(module_url)
         if (!init) {
             plugin_logger(plugin_name, "没有 init 导出", "error")
@@ -301,6 +310,18 @@ export function list_plugin(): string[] {
     return lines
 }
 
+/** 按分发器统计插件实例数 */
+export function get_plugin_counts(): {game_adapter: number; chat_adapter: number} {
+    let game = 0, chat = 0
+    for (const config_map of running_plugins.values()) {
+        for (const {adapters} of config_map.values()) {
+            if (adapters.includes("game_adapter")) game++
+            if (adapters.includes("chat_adapter")) chat++
+        }
+    }
+    return {game_adapter: game, chat_adapter: chat}
+}
+
 /**
  * 重载插件。
  * 不带参数时重载全部插件，带参数时只重载指定名称的插件。
@@ -342,4 +363,17 @@ export async function reload_plugin(plugin_name?: string) {
     await load_plugin_from_dir(found.sub_dir, found.default_adapters)
     rebuild_help_list()
     plugin_logger(plugin_name, `插件 ${plugin_name} 重载完成`, "info")
+}
+
+/** 停止并从运行注册表移除指定插件。 */
+export function unload_plugin(plugin_name: string): boolean {
+    const configMap = running_plugins.get(plugin_name)
+    if (!configMap) return false
+    for (const {instance} of configMap.values()) {
+        instance.on_unload?.()
+    }
+    running_plugins.delete(plugin_name)
+    rebuild_help_list()
+    plugin_logger(plugin_name, `插件 ${plugin_name} 已卸载`, "info")
+    return true
 }

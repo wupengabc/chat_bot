@@ -1,4 +1,20 @@
 {
+  "name": "plugin_runtime",
+  "description": "命令前缀配置",
+  "config_template": {
+    "chat_adapter_prefix": {
+      "name": "聊天消息前缀",
+      "type": "text",
+      "description": "聊天平台命令前缀，重载聊天插件后生效",
+      "default": "#"
+    },
+    "game_adapter_prefix": {
+      "name": "游戏消息前缀",
+      "type": "text",
+      "description": "游戏内命令前缀，重载游戏插件后生效",
+      "default": "\\"
+    }
+  },
   "chat_adapter_prefix": "#",
   "game_adapter_prefix": "\\"
 }

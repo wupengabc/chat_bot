@@ -33,6 +33,7 @@ export interface PriceAverageReport {
     label: "出售" | "收购"
     average: number
     validShops: string[]
+    adjustedShops: Array<{shop: string; price: number}>
     outliers: Array<{shop: string; price: number}>
     generatedAt?: Date
 }
@@ -166,15 +167,19 @@ export function renderPriceAverageSvg(report: PriceAverageReport): string {
     const sourceBottom = SOURCE_TAG_TOP
         + sourceLayout.rowCount * SOURCE_TAG_HEIGHT
         + (sourceLayout.rowCount - 1) * SOURCE_ROW_GAP
+    const hasAdjusted = report.adjustedShops.length > 0
     const hasOutliers = report.outliers.length > 0
-    const outlierTop = sourceBottom + 41
+    const adjustedTop = sourceBottom + 41
+    const adjustedHeight = hasAdjusted ? 50 + report.adjustedShops.length * 40 + 9 : 0
+    const adjustedBottom = hasAdjusted ? adjustedTop + adjustedHeight : sourceBottom
+    const outlierTop = (hasAdjusted ? adjustedBottom : sourceBottom) + 41
     const outlierHeight = OUTLIER_HEADER_HEIGHT
         + report.outliers.length * OUTLIER_ROW_HEIGHT
         + OUTLIER_BOTTOM_PADDING
     const lastOutlierRowBottom = hasOutliers
         ? outlierTop + OUTLIER_HEADER_HEIGHT + report.outliers.length * OUTLIER_ROW_HEIGHT
-        : sourceBottom
-    const outlierBottom = hasOutliers ? outlierTop + outlierHeight : sourceBottom
+        : (hasAdjusted ? adjustedBottom : sourceBottom)
+    const outlierBottom = hasOutliers ? outlierTop + outlierHeight : (hasAdjusted ? adjustedBottom : sourceBottom)
     const footerLineY = outlierBottom + 16
     const footerTextY = outlierBottom + 44
     const footerBottom = outlierBottom + 48
@@ -192,6 +197,25 @@ export function renderPriceAverageSvg(report: PriceAverageReport): string {
 <rect x="${tag.x}" y="${tag.y}" width="${tag.width}" height="${SOURCE_TAG_HEIGHT}" rx="3" fill="#F2F6EF" stroke="#CBD9C6"/>
 <text x="${tag.x + tag.width / 2}" y="${tag.y + 26}" text-anchor="middle" clip-path="url(#source-tag-clip-${tag.index})" font-size="14" font-weight="650" fill="#315D43">${escapeXml(tag.text)}</text>`
     ).join("\n")
+
+    const adjustedRows = report.adjustedShops.map((shop, index) => {
+        const rowTop = adjustedTop + 50 + index * 40
+        const textY = rowTop + 26
+        const shopName = truncateToWidth(shop.shop, 288, 14)
+        const price = formatPrice(shop.price)
+        const priceLayout = fitPriceText(price, OUTLIER_PRICE_MAX_WIDTH, 15, 10)
+        return `<clipPath id="adjusted-shop-clip-${index}"><rect x="96" y="${rowTop}" width="292" height="40"/></clipPath>
+<text x="96" y="${textY}" clip-path="url(#adjusted-shop-clip-${index})" font-size="14" font-weight="650" fill="#6B5A2E">${escapeXml(shopName)}</text>
+<text x="420" y="${textY}" font-size="13" fill="#8F7D4A">已修正后纳入</text>
+<clipPath id="adjusted-price-clip-${index}"><rect x="636" y="${rowTop}" width="188" height="40"/></clipPath>
+<text x="824" y="${textY}" text-anchor="end" clip-path="url(#adjusted-price-clip-${index})" font-size="${priceLayout.fontSize}" font-weight="750" fill="#D99025">${escapeXml(price)}</text>`
+    }).join("\n")
+    const adjustedSection = hasAdjusted ? `<rect x="66" y="${adjustedTop}" width="788" height="${adjustedHeight}" fill="#FFFBF0" stroke="#E8DCC4"/>
+<rect x="66" y="${adjustedTop}" width="6" height="${adjustedHeight}" fill="#D99025"/>
+<text x="96" y="${adjustedTop + 37}" font-size="17" font-weight="800" fill="#7D6A2E">已修正后纳入均值的价格</text>
+<text x="96" y="${adjustedTop + 65}" font-size="13" fill="#8F7D4A">这些商店的均价偏离较大，已选取其店内最接近市场均价的单品价格。</text>
+<line x1="96" y1="${adjustedTop + 50}" x2="824" y2="${adjustedTop + 50}" stroke="#E8DCC4"/>
+${adjustedRows}` : ""
 
     const outlierRows = report.outliers.map((outlier, index) => {
         const rowTop = outlierTop + OUTLIER_HEADER_HEIGHT + index * OUTLIER_ROW_HEIGHT
@@ -232,9 +256,9 @@ ${outlierRows}` : ""
 <text x="${averageUnitX}" y="267" font-size="21" font-weight="700" fill="#777469">金币</text>
 <line x1="500" y1="184" x2="500" y2="286" stroke="#D9D2C3"/>
 <text x="530" y="205" font-size="13" fill="${COLORS.muted}">原始样本</text>
-<text x="530" y="242" font-size="27" font-weight="800" fill="${COLORS.text}">${report.validShops.length + report.outliers.length}</text>
+<text x="530" y="242" font-size="27" font-weight="800" fill="${COLORS.text}">${report.validShops.length + report.adjustedShops.length + report.outliers.length}</text>
 <text x="636" y="205" font-size="13" fill="${COLORS.muted}">计入均值</text>
-<text x="636" y="242" font-size="27" font-weight="800" fill="${COLORS.valid}">${report.validShops.length}</text>
+<text x="636" y="242" font-size="27" font-weight="800" fill="${COLORS.valid}">${report.validShops.length + report.adjustedShops.length}</text>
 <text x="755" y="205" font-size="13" fill="${COLORS.muted}">异常样本</text>
 <text x="755" y="242" font-size="27" font-weight="800" fill="${COLORS.outlier}">${report.outliers.length}</text>
 <text x="530" y="276" font-size="12" fill="#999588">IQR 四分位距清洗</text>
@@ -242,6 +266,8 @@ ${outlierRows}` : ""
 <text x="66" y="359" font-size="18" font-weight="800" fill="${COLORS.text}">有效数据来源</text>
 <text x="854" y="359" text-anchor="end" font-size="13" fill="${COLORS.muted}">${report.validShops.length} 家商店</text>
 ${sourceTags}
+
+${adjustedSection}
 
 ${outlierSection}
 

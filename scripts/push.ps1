@@ -1,11 +1,11 @@
 # scripts/push.ps1
-# 推送时自动将 package.json 中的本地 link: 依赖替换为 GitHub 仓库链接
+# 推送时自动将 package.json 中的本地 link: 依赖替换为已发布的 npm 包
 # 推送完成后自动恢复本地开发链接
 #
 # 用法:
-#   .\push.ps1                  # 默认推送当前分支到 origin 和 gitee
-#   .\push.ps1 --force          # 强制推送当前分支到 origin 和 gitee
-#   .\push.ps1 origin main      # 传入参数时仅按指定参数推送
+#   .\push.ps1                  # 默认推送当前分支到 gitee
+#   .\push.ps1 --force          # 强制推送当前分支到 gitee
+#   .\push.ps1 gitee main       # 传入参数时仅按指定参数推送
 
 $ErrorActionPreference = "Stop"
 
@@ -44,7 +44,7 @@ function Push-Repository {
         $forceArgs = @("--force")
     }
 
-    foreach ($remote in @("origin", "gitee")) {
+    foreach ($remote in @("gitee")) {
         git -C $repoRoot remote get-url $remote 1>$null 2>$null
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "未找到 Git 远程仓库: $remote，跳过推送"
@@ -97,19 +97,19 @@ try {
     Copy-Item $packageJson $backup -Force
     $backupCreated = $true
 
-    # 替换本地链接为 GitHub 仓库
+    # 替换本地链接为发布的 npm 包
     $pushContent = $content
     $pushContent = $pushContent -replace `
         '"minecraft-data":\s*"link:[^"]*"', `
-        '"minecraft-data": "github:wupengabc/node-minecraft-data"'
+        '"minecraft-data": "npm:@wp2508/minecraft-data@^3.111.0"'
 
     $pushContent = $pushContent -replace `
         '"minecraft-protocol":\s*"link:[^"]*"', `
-        '"minecraft-protocol": "github:wupengabc/node-minecraft-protocol"'
+        '"minecraft-protocol": "npm:@wp2508/minecraft-protocol@^1.67.0"'
 
     $pushContent = $pushContent -replace `
         '"mineflayer":\s*"link:[^"]*"', `
-        '"mineflayer": "github:wupengabc/mineflayer"'
+        '"mineflayer": "npm:@wp2508/mineflayer@^4.38.0"'
 
     Set-Content $packageJson $pushContent -NoNewline -Encoding utf8
 
@@ -138,7 +138,7 @@ try {
             -ForegroundColor Yellow
     }
 
-    Write-Host "[push.ps1] 已替换本地链接为 GitHub 仓库，开始推送..." `
+    Write-Host "[push.ps1] 已替换本地链接为 npm 包，开始推送..." `
         -ForegroundColor Cyan
 
     Push-Repository -PushArgs $args

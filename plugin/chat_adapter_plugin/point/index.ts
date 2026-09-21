@@ -2,10 +2,10 @@ import {acquire_plugin_lock, get_chat_adapter_prefix, release_plugin_lock} from 
 import {help} from "../../type.js"
 import {send_message} from "../../../chat_adapter/index.js"
 import {get_storage} from "../../../storage/index.js"
-import {Structs} from "node-napcat-ts"
+import {message as Structs} from "@snowluma/sdk"
 const currentUrl = new URL(import.meta.url)
 const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
-const utilsUrl = new URL("./utils/index.js", import.meta.url)
+const utilsUrl = new URL("./utils/index.ts", import.meta.url)
 utilsUrl.searchParams.set("t", version)
 const {renderPointLogs} = await import(utilsUrl.href)
 

@@ -1,0 +1,18 @@
+{
+  "name": "bangxi_autoend",
+  "description": "自动end插件",
+  "config_template": {
+    "players": {
+      "name": "players",
+      "type": "string_list",
+      "description": "自动执行 end 的玩家名名单",
+      "default": []
+    }
+  },
+  "configs": [
+    {
+      "name": "example",
+      "players": []
+    }
+  ]
+}

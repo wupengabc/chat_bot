@@ -22,7 +22,7 @@ export class init {
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null
     private playerListTimer: ReturnType<typeof setInterval> | null = null
     private isStopped = false
-    private config: Record<string, unknown> = {}
+    public config: Record<string, unknown> = {}
     private logger = (msg: string, level: LoggerType)=>{
         game_adapter_logger("mineflayer", msg, level)
     }
@@ -43,7 +43,7 @@ export class init {
                 try {
                     const success = this.send_message(message)
                     return success 
-                        ? `成功发送消息: ${message}` 
+                        ? `成功发送消息: ${message}`
                         : "发送失败: bot 未运行"
                 } catch (error: any) {
                     return `发送消息失败: ${error.message}`
@@ -90,8 +90,7 @@ export class init {
             }
             // 断开 bot 连接
             if (this.bot) {
-                this.bot.removeAllListeners()
-                this.bot.end()
+                this.detachBot(this.bot)
                 this.bot = null
             }
             this.reconnectCount = 0
@@ -103,12 +102,29 @@ export class init {
         }
     }
 
+    /**
+     * 清空旧 bot 上除 error 外的所有监听器并结束连接。
+     *
+     * bot.end() 只是发起异步收尾（等待 serializer/socket 优雅关闭或超时强制
+     * destroy），并不会立刻让底层 client 触发 'end'。这意味着 removeAllListeners()
+     * 执行之后、真正断开之前，仍有一个窗口期：NMP 内部已经在跑的计时器（例如
+     * keepalive 宽限期）可能照常到期，并调用 client.emit('error', ...)，经
+     * mineflayer loader 转发为 bot.emit('error', ...)。如果此时 bot 上一个
+     * 'error' 监听器都没有，Node 会把它当作未处理异常直接抛出，崩溃整个进程
+     * （不只是这一个 bot 实例）。所以必须在移除旧监听器之后，永远保留（或立刻
+     * 补上）一个兜底的空 'error' 监听器，再发起 end()。
+     */
+    private detachBot(bot: any): void {
+        bot.removeAllListeners()
+        bot.on("error", () => {})
+        bot.end()
+    }
+
     private start(config: Record<string, unknown>): void {
         // 清理旧 bot
         if (this.bot) {
             try {
-                this.bot.removeAllListeners()
-                this.bot.end()
+                this.detachBot(this.bot)
             } catch {
                 // ignore
             }
@@ -133,8 +149,23 @@ export class init {
             username: typeof config.username === "string" ? config.username : "",
             version: typeof config.version === "string" ? config.version : undefined,
             hideErrors: true,
-        })
+            checkTimeoutInterval: 120000,
+            keepAliveTimeoutGracePeriod: 5000
+        } as any)
 
+        const protocolClient = this.bot._client
+        protocolClient?.on("keep_alive", (packet: any) => {
+            protocolClient._chatBotLastKeepAliveAt = Date.now()
+            protocolClient._chatBotLastKeepAliveId = typeof packet?.keepAliveId === "bigint"
+                ? packet.keepAliveId.toString()
+                : packet?.keepAliveId
+        })
+        protocolClient?.on("keepAliveWarning", (diagnostics: any) => {
+            this.logger(this.formatKeepAliveDiagnostics(config, "keepalive 暂无入站数据，进入宽限期", diagnostics), "warn")
+        })
+        protocolClient?.on("keepAliveRecovered", (diagnostics: any) => {
+            this.logger(this.formatKeepAliveDiagnostics(config, "keepalive 在宽限期内恢复", diagnostics), "info")
+        })
         // ── 登录成功 ──
         this.bot.on("login", () => {
             this.reconnectCount = 0
@@ -149,6 +180,9 @@ export class init {
         this.bot.on("end", (reason: string) => {
             this.status = "stopped"
             this.logger(`连接已断开（实例: ${config.name}，原因: ${reason}）`, "info")
+            if (reason === "keepAliveError") {
+                this.logger(this.formatConnectionDiagnostics(config, this.bot?._client), "error")
+            }
             this.event.emit("disconnect", {adapter: "mineflayer", instance_name: config.name, reason })
             // 自动重连（仅在未被主动 stop 时）
             if (!this.isStopped && (config.reconnection as any)?.enable !== false) {
@@ -176,7 +210,11 @@ export class init {
 
         // ── 错误 ──
         this.bot.on("error", (err: any) => {
-            this.logger(`实例 ${config.name} 错误: ${err.message || err.toString() || "错误"}`, "error")
+            const errorMessage = err.message || err.toString() || "错误"
+            const diagnosticMessage = err.keepAliveDiagnostics
+                ? `；${this.formatKeepAliveDiagnostics(config, "keepalive 错误详情", err.keepAliveDiagnostics)}`
+                : ""
+            this.logger(`实例 ${config.name} 错误: ${errorMessage}${diagnosticMessage}`, "error")
             this.event.emit("adapter_error", {adapter: "mineflayer", instance_name: config.name, error: err.message || err.toString() })
         })
 
@@ -213,6 +251,29 @@ export class init {
                 }
             }, 2000)
         }
+    }
+
+    private formatKeepAliveDiagnostics(config: Record<string, unknown>, message: string, diagnostics: any): string {
+        const state = diagnostics?.protocolState ?? "unknown"
+        const idle = diagnostics?.socketIdleFor == null ? "unknown" : `${diagnostics.socketIdleFor}ms`
+        const lastPacket = diagnostics?.lastKeepAliveAt == null ? "none" : `${Date.now() - diagnostics.lastKeepAliveAt}ms ago`
+        const socketEvent = diagnostics?.lastSocketEvent?.event ?? "none"
+        const socketHistory = Array.isArray(diagnostics?.socketEventHistory)
+            ? diagnostics.socketEventHistory.map((event: any) => event.event).join(",")
+            : "none"
+        return `实例 ${config.name} ${message}（state=${state}，socket_idle=${idle}，last_keepalive=${lastPacket}，last_socket_event=${socketEvent}，socket_history=${socketHistory}，grace=${diagnostics?.keepAliveTimeoutGracePeriod ?? "unknown"}ms）`
+    }
+
+    private formatConnectionDiagnostics(config: Record<string, unknown>, client: any): string {
+        const socket = client?.socket
+        const lastActivity = client?._lastSocketActivity
+        const idle = lastActivity == null ? "unknown" : `${Date.now() - lastActivity}ms`
+        const lastKeepAlive = client?._chatBotLastKeepAliveAt ?? client?._lastKeepAliveAt
+        const keepAlive = lastKeepAlive == null ? "none" : `${Date.now() - lastKeepAlive}ms ago`
+        const socketState = socket
+            ? `destroyed=${socket.destroyed}, readableEnded=${socket.readableEnded}, writableEnded=${socket.writableEnded}, readyState=${socket.readyState ?? "unknown"}`
+            : "missing"
+        return `实例 ${config.name} keepalive 断开时连接状态（state=${client?.protocolState ?? "unknown"}，protocol=${client?.protocolVersion ?? "unknown"}，socket_idle=${idle}，last_keepalive=${keepAlive}，socket=${socketState}）`
     }
 
     public send_message(message: string) :boolean {

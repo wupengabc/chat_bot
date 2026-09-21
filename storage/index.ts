@@ -24,7 +24,7 @@ export function storage_handle_adapter_event(adapter: string, event: string, dat
 async function load_storage_from_dir(dir_path: string) {
     const dir_name = path.basename(dir_path)
     try {
-        const module_url = pathToFileURL(path.join(dir_path, "index.js")).href + `?t=${Date.now()}`
+        const module_url = pathToFileURL(path.join(dir_path, "index.ts")).href + `?t=${Date.now()}`
         const {init} = await import(module_url)
         const storage = new init()
         storage_logger(dir_name, `成功启动 ${path.basename(dir_path)} storage`, "info")
@@ -104,6 +104,16 @@ export async function reload_storage(storage_name?: string) {
     storage_logger(storage_name, `正在重新加载 storage ${storage_name}...`, "info")
     await load_storage_from_dir(dir_path)
     storage_logger(storage_name, `storage ${storage_name} 重载完成`, "info")
+}
+
+/** 停止并从运行注册表移除指定 storage。 */
+export function unload_storage(storage_name: string): boolean {
+    const storage = running_storage.get(storage_name)
+    if (!storage) return false
+    storage.on_unload?.()
+    running_storage.delete(storage_name)
+    storage_logger(storage_name, `storage ${storage_name} 已卸载`, "info")
+    return true
 }
 
 export function get_storage(plugin: string) {

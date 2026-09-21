@@ -66,6 +66,14 @@ export class init {
             .get()
     }
 
+    /** 查询用户信息但不创建新记录，供只读鉴权边界使用。 */
+    find_user_info(user_id: string) {
+        return this.orm.select()
+            .from(user_table)
+            .where(eq(user_table.user_id, user_id))
+            .get()
+    }
+
     /** 绑定游戏账户 */
     bind_game_id(user_id: string, game_id: string) {
         try {

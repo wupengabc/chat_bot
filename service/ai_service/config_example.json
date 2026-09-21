@@ -1,5 +1,38 @@
 {
-  "api": "https://ai.hoviw.com/v1",
-  "key": "your_key_here",
-  "model": "gpt-5.6-sol"
+  "name": "ai_service",
+  "description": "AI服务",
+  "config_template": {
+    "api": {
+      "name": "api",
+      "type": "string",
+      "description": "API地址",
+      "default": ""
+    },
+    "key": {
+      "name": "key",
+      "type": "string",
+      "description": "API密钥",
+      "default": ""
+    },
+    "model": {
+      "name": "model",
+      "type": "string",
+      "description": "模型名称",
+      "default": ""
+    }
+  },
+  "configs": [
+    {
+      "name": "config1",
+      "api": "",
+      "key": "",
+      "model": ""
+    },
+    {
+      "name": "sensenova_u1_fast",
+      "api": "https://token.sensenova.cn/v1",
+      "key": "",
+      "model": "sensenova-u1-fast"
+    }
+  ]
 }

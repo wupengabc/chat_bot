@@ -1,10 +1,10 @@
 import {help} from "../../type.js";
 import {send_message} from "../../../chat_adapter/index.js";
 import {get_chat_adapter_prefix, help_list, permission_map, acquire_plugin_lock, release_plugin_lock} from "../../index.js";
-import {Structs} from "node-napcat-ts";
+import {message as Structs} from "@snowluma/sdk";
 const currentUrl = new URL(import.meta.url)
 const version = currentUrl.searchParams.get("t") ?? Date.now().toString()
-const utilsUrl = new URL("./utils/index.js", import.meta.url)
+const utilsUrl = new URL("./utils/index.ts", import.meta.url)
 utilsUrl.searchParams.set("t", version)
 const { renderCommandHelp } = await import(utilsUrl.href)
 
@@ -31,7 +31,9 @@ export class init {
                 }
                 try {
                     const page = parseInt(data.raw_message.split(" ")[1]) || 1
-                    const chat_adapter_help = help_list.filter(item => item.platform === "chat_adapter")
+                    const chat_adapter_help = help_list.filter(item =>
+                        item.platform === "chat_adapter" && (!item.is_visible || item.is_visible(data))
+                    )
                     const total_page = Math.ceil(chat_adapter_help.length / this.help_list_page_size)
                     const page_list_send = chat_adapter_help.slice((page - 1) * this.help_list_page_size, page * this.help_list_page_size)
                     const buffer = renderCommandHelp(page_list_send, page, total_page, {
